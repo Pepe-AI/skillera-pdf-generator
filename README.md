@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Skillera PDF Generator
 
 A Python application for generating PDF documents with charts and visualizations.
@@ -29,3 +30,7 @@ python main.py
 └── assets/
     └── .gitkeep
 ```
+=======
+# skillera-pdf-generator
+generador de diagnósticos de habilidades de liderazgo automatizado
+>>>>>>> e1b7f803824e1db049a6d752708ef7bd74264280

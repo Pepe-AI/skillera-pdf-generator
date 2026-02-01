@@ -58,6 +58,8 @@ Thumbs.db
 *.pdf
 assets/*
 !assets/.gitkeep
+!assets/brand_colors.json
+!assets/skillera_logo.png
 =======
 share/python-wheels/
 *.egg-info/

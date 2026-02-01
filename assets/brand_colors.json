@@ -1,0 +1,12 @@
+{
+    "primary": "#6B46C1",
+    "secondary": "#805AD5",
+    "background": "#1A1A2E",
+    "text_light": "#FFFFFF",
+    "text_dark": "#1A1A2E",
+    "chart_colors": {
+        "avanzado": "#9F7AEA",
+        "intermedio": "#667EEA",
+        "principiante": "#A0AEC0"
+    }
+}

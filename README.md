@@ -1,21 +1,20 @@
-<<<<<<< HEAD
 # Skillera PDF Generator
 
-A Python application for generating PDF documents with charts and visualizations.
+Generador de diagnósticos de habilidades de liderazgo automatizado.
 
-## Installation
+## Instalación
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Usage
+## Uso
 
 ```bash
-python main.py
+uvicorn main:app --reload --port 8000
 ```
 
-## Project Structure
+## Estructura del Proyecto
 
 ```
 ├── README.md
@@ -23,14 +22,26 @@ python main.py
 ├── requirements.txt
 ├── main.py
 ├── config.py
+├── models/
+│   ├── __init__.py
+│   └── schemas.py
 ├── services/
 │   ├── __init__.py
 │   ├── pdf_generator.py
 │   └── chart_generator.py
+├── tests/
+│   ├── __init__.py
+│   └── test_endpoints.py
 └── assets/
-    └── .gitkeep
+    ├── brand_colors.json
+    └── skillera_logo.png
 ```
-=======
-# skillera-pdf-generator
-generador de diagnósticos de habilidades de liderazgo automatizado
->>>>>>> e1b7f803824e1db049a6d752708ef7bd74264280
+
+## Endpoints
+
+| Endpoint | Método | Descripción |
+|----------|--------|-------------|
+| `/` | GET | Info del servicio |
+| `/health` | GET | Verificación de salud |
+| `/generate-pdf` | POST | Genera PDF (retorna archivo binario) |
+| `/generate-pdf-base64` | POST | Genera PDF (retorna base64 para WhatsApp/Email) |

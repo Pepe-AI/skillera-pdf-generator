@@ -51,3 +51,11 @@ class PDFResponse(BaseModel):
     success: bool
     pdf_base64: str
     filename: str
+
+class PDFUrlResponse(BaseModel):
+    """Response for the URL endpoint (used by n8n → Kommo Salesbot)."""
+    success: bool
+    pdf_url: str
+    pdf_id: str
+    filename: str
+    expires_in_minutes: int

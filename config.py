@@ -44,7 +44,13 @@ class Config:
     PDF_MARGIN_BOTTOM = 40
     PDF_CONTENT_WIDTH = PDF_PAGE_WIDTH - PDF_MARGIN_LEFT - PDF_MARGIN_RIGHT
 
-    # Fonts
+    # Fonts (Montserrat — visually similar to Gotham from original design)
+    FONTS_DIR = os.path.join(ASSETS_DIR, "fonts")
+    FONT_BOLD = os.path.join(FONTS_DIR, "Montserrat-Bold.ttf")
+    FONT_BOLD_ITALIC = os.path.join(FONTS_DIR, "Montserrat-BoldItalic.ttf")
+    FONT_LIGHT = os.path.join(FONTS_DIR, "Montserrat-Light.ttf")
+
+    # Legacy names (kept for reference)
     PDF_FONT = "Helvetica"
     PDF_FONT_BOLD = "Helvetica-Bold"
     PDF_FONT_ITALIC = "Helvetica-Oblique"

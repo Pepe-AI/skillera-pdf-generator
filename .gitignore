@@ -58,3 +58,5 @@ assets/*
 !assets/logo_fondo_transparente.png
 !assets/logo_fondo_transparente.svg
 !assets/template.pdf
+!assets/fonts/
+!assets/fonts/*.ttf

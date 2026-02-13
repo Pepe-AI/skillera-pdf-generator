@@ -5,10 +5,14 @@ Opens the branded PDF template (assets/template.pdf) which already contains
 the full visual design (gradient, banner, logo, section titles, chart axes).
 Then overlays dynamic data: user info, scores, summary, chart bars, and
 learning path text.
+
+Fonts: Montserrat (Bold, BoldItalic, Light) — visual match for Gotham.
 """
 
 from io import BytesIO
 from datetime import date
+import re
+import os
 
 import pymupdf  # PyMuPDF
 
@@ -20,10 +24,10 @@ from config import Config
 # Template background color (used to "erase" bar areas before redrawing)
 _BG_RGB = (0.1373, 0.0510, 0.3098)  # dark purple from template bg
 
-# Text colors
-_WHITE = (1.0, 1.0, 1.0)
-_LIGHT = (0.957, 0.941, 0.976)       # #F4F0F9 — label color in template
-_CYAN = (0.396, 0.651, 0.980)        # #65A6FA — section title color
+# Text colors (from design JSON)
+_WHITE = (1.0, 1.0, 1.0)                    # #FFFFFF
+_LIGHT = (0.957, 0.941, 0.976)              # #F4F0F9
+_CYAN = (0.396, 0.651, 0.980)              # #65A6FA
 
 # Chart bar colors (matching template legend)
 _BAR_COLORS = {
@@ -37,8 +41,13 @@ class PDFGenerator:
     """Generates leadership diagnostic PDFs by filling a branded template."""
 
     def __init__(self):
-        """Initialize with template path."""
+        """Initialize with template path and load custom fonts."""
         self.template_path = Config.TEMPLATE_PDF_PATH
+
+        # Load Montserrat fonts (Gotham substitute)
+        self.font_bold = pymupdf.Font(fontfile=Config.FONT_BOLD)
+        self.font_bold_italic = pymupdf.Font(fontfile=Config.FONT_BOLD_ITALIC)
+        self.font_light = pymupdf.Font(fontfile=Config.FONT_LIGHT)
 
     def generate_pdf(self, data: dict) -> BytesIO:
         """
@@ -52,7 +61,6 @@ class PDFGenerator:
         """
         doc = pymupdf.open(self.template_path)
         page = doc[0]
-        page_h = page.rect.height  # 842.25
 
         user = data["user"]
         results = data["results"]
@@ -85,26 +93,29 @@ class PDFGenerator:
     def _fill_user_data(self, page, user: dict):
         """Fill name, position, and date fields.
 
-        Template label positions (PyMuPDF coords, y from top):
-        - "Elaborado para:" → x0=28.7, x1=158.2, y_bottom=228.6
-        - "Puesto/Rol:"     → x0=270.6, x1=372.4, y_bottom=228.6
-        - "Fecha de Emisión:" → x0=28.7, x1=175.5, y_bottom=245.1
+        Design spec:
+        - Name:     Gotham Bold Italic, 12.97pt, #F4F0F9
+        - Position: Gotham Bold, 12.97pt, #F4F0F9
+        - Date:     Gotham Bold, 12.97pt, #F4F0F9
         """
         name = user.get("name", "")
         position = user.get("position", "")
         display_date = user.get("date") or date.today().isoformat()
 
-        # Name — after "Elaborado para:" (x1=158.2), baseline at y_bottom=228
-        self._insert_text(page, 160, 226, name,
-                          fontsize=12, color=_LIGHT, italic=True)
+        # Name — Montserrat Bold Italic, 12.97pt, #F4F0F9
+        self._insert_font_text(page, 160, 226, name,
+                               font=self.font_bold_italic,
+                               fontsize=12.97, color=_LIGHT)
 
-        # Position — after "Puesto/Rol:" (x1=372.4)
-        self._insert_text(page, 374, 226, position,
-                          fontsize=12, color=_LIGHT, bold=True)
+        # Position — Montserrat Bold, 12.97pt, #F4F0F9
+        self._insert_font_text(page, 374, 226, position,
+                               font=self.font_bold,
+                               fontsize=12.97, color=_LIGHT)
 
-        # Date — after "Fecha de Emisión:" (x1=175.5)
-        self._insert_text(page, 177, 243, display_date,
-                          fontsize=12, color=_LIGHT, bold=True)
+        # Date — Montserrat Bold, 12.97pt, #F4F0F9
+        self._insert_font_text(page, 177, 243, display_date,
+                               font=self.font_bold,
+                               fontsize=12.97, color=_LIGHT)
 
     # ── Results ──────────────────────────────────────────────────────
 
@@ -112,50 +123,60 @@ class PDFGenerator:
         """Fill overall level and score.
 
         Scoring system:
-        - 4 dimensions × 2 questions × scale 1-5 = max 10 per dim, max 40 total
+        - 4 dimensions x 2 questions x scale 1-5 = max 10 per dim, max 40 total
         - n8n sends overall_score as percentage (0-100)
         - PDF must display raw score: e.g. "23/ 40"
+
+        Design spec:
+        - Level:  Gotham Bold, 13.98pt, #65A6FA
+        - Score:  Gotham Bold, 13.98pt, #F4F0F9
         """
         level = results.get("overall_level", "")
         score_pct = results.get("overall_score", 0)  # percentage 0-100
 
         # Convert percentage to raw score (scale: max 40 points)
         num_dims = len(results.get("dimensions", []))
-        max_per_dim = 10   # each dimension: 2 questions × scale 1-5
+        max_per_dim = 10   # each dimension: 2 questions x scale 1-5
         max_score = num_dims * max_per_dim if num_dims > 0 else 40
         raw_score = round(score_pct * max_score / 100.0)
 
-        # "Tu Resultado General:" x1=218.9, y_bottom=280.8
-        self._insert_text(page, 221, 279, level.upper(),
-                          fontsize=13, color=_CYAN, bold=True)
+        # Level — Montserrat Bold, 13.98pt, #65A6FA
+        self._insert_font_text(page, 221, 279, level.upper(),
+                               font=self.font_bold,
+                               fontsize=13.98, color=_CYAN)
 
-        # "Puntuación Global:" x1=192.1, y_bottom=302.6
+        # Score — Montserrat Bold, 13.98pt, #F4F0F9
         score_text = f"{raw_score}/ {max_score}"
-        self._insert_text(page, 194, 301, score_text,
-                          fontsize=13, color=_WHITE, bold=True)
+        self._insert_font_text(page, 194, 301, score_text,
+                               font=self.font_bold,
+                               fontsize=13.98, color=_LIGHT)
 
     # ── Summary ──────────────────────────────────────────────────────
 
     def _fill_summary(self, page, summary: str):
-        """Fill the summary paragraph below the score."""
+        """Fill the summary paragraph below the score.
+
+        Design spec:
+        - Gotham Light, 12pt, #FFFFFF, line spacing 16.51pt, align left
+        """
         if not summary:
             return
 
-        # Clean HTML tags for plain text
         clean = self._strip_html(summary)
 
-        # Summary area: x=26 to 559, y starts at ~312 (842-530)
-        # Using a text writer for word-wrapped text
+        # Summary area rect
         rect = pymupdf.Rect(27, 312, 559, 430)
         self._insert_paragraph(page, rect, clean,
-                               fontsize=10, color=_WHITE)
+                               font=self.font_light,
+                               fontsize=12.0, color=_WHITE,
+                               leading=16.51)
 
     # ── Chart bars ───────────────────────────────────────────────────
 
     def _fill_chart_bars(self, page, results: dict):
         """Draw horizontal bars for each dimension score.
 
-        Scoring: each dimension has max 10 raw points (2 questions × scale 1-5).
+        Scoring: each dimension has max 10 raw points (2 questions x scale 1-5).
         n8n sends scores as percentages (0-100).  We convert back to raw (0-10).
 
         Template chart axis goes 0-35 but real scale is 0-10, so we map
@@ -233,60 +254,183 @@ class PDFGenerator:
     # ── Learning path ────────────────────────────────────────────────
 
     def _fill_learning_path(self, page, learning_path: str):
-        """Fill the learning path text below its title."""
+        """Fill the learning path text below its title.
+
+        Design spec:
+        - Main text: Gotham Light, 12.5pt, #FFFFFF, line spacing 17.26pt, align left
+        - Bold emphasis: Gotham Bold, 12.5pt, #FFFFFF (for <b>...</b> or **...** tags)
+        """
         if not learning_path:
             return
 
-        clean = self._strip_html(learning_path)
-
-        # "Ruta de Aprendizaje Recomendada" title is at y≈600 (842-242)
-        # Text area starts below it: y≈615 to bottom of page (~820)
         rect = pymupdf.Rect(27, 612, 559, 820)
-        self._insert_paragraph(page, rect, clean,
-                               fontsize=10, color=_WHITE)
+        self._insert_rich_paragraph(page, rect, learning_path,
+                                    fontsize=12.5, color=_WHITE,
+                                    leading=17.26)
 
     # ── Helper methods ───────────────────────────────────────────────
 
-    def _insert_text(self, page, x: float, y: float, text: str,
-                     fontsize: float = 11, color=_WHITE,
-                     bold: bool = False, italic: bool = False):
-        """Insert a single line of text at the given position."""
+    def _insert_font_text(self, page, x: float, y: float, text: str,
+                          font=None, fontsize: float = 11, color=_WHITE):
+        """Insert a single line of text using a custom Font object."""
         if not text:
             return
 
-        fontname = "helv"
-        if bold and italic:
-            fontname = "hebi"
-        elif bold:
-            fontname = "hebo"
-        elif italic:
-            fontname = "heit"
-
-        page.insert_text(
-            pymupdf.Point(x, y),
-            text,
-            fontsize=fontsize,
-            fontname=fontname,
-            color=color,
-        )
+        writer = pymupdf.TextWriter(page.rect)
+        writer.append(pymupdf.Point(x, y), text, font=font, fontsize=fontsize)
+        writer.write_text(page, color=color)
 
     def _insert_paragraph(self, page, rect: pymupdf.Rect, text: str,
-                          fontsize: float = 10, color=_WHITE):
-        """Insert word-wrapped text inside a rectangle."""
-        # Use insert_textbox for automatic word wrapping
-        page.insert_textbox(
-            rect,
-            text,
-            fontsize=fontsize,
-            fontname="helv",
-            color=color,
-            align=pymupdf.TEXT_ALIGN_JUSTIFY,
-        )
+                          font=None, fontsize: float = 10, color=_WHITE,
+                          leading: float = None):
+        """Insert word-wrapped plain text inside a rectangle using TextWriter.
+
+        Uses manual line-breaking for proper leading (line spacing) control.
+        """
+        if not text:
+            return
+
+        if font is None:
+            font = self.font_light
+        if leading is None:
+            leading = fontsize * 1.4
+
+        words = text.split()
+        if not words:
+            return
+
+        x0, y0, x1, _ = rect
+        max_width = x1 - x0
+        current_y = y0 + fontsize  # baseline of first line
+
+        writer = pymupdf.TextWriter(page.rect)
+        line = ""
+
+        for word in words:
+            test_line = f"{line} {word}".strip() if line else word
+            text_width = font.text_length(test_line, fontsize=fontsize)
+
+            if text_width <= max_width:
+                line = test_line
+            else:
+                # Write current line
+                if line:
+                    writer.append(pymupdf.Point(x0, current_y), line,
+                                  font=font, fontsize=fontsize)
+                    current_y += leading
+                line = word
+
+            if current_y > rect.y1:
+                break
+
+        # Write last line
+        if line and current_y <= rect.y1:
+            writer.append(pymupdf.Point(x0, current_y), line,
+                          font=font, fontsize=fontsize)
+
+        writer.write_text(page, color=color)
+
+    def _insert_rich_paragraph(self, page, rect: pymupdf.Rect, text: str,
+                               fontsize: float = 12.5, color=_WHITE,
+                               leading: float = None):
+        """Insert word-wrapped text with bold spans inside a rectangle.
+
+        Supports <b>...</b> and <strong>...</strong> HTML tags for bold emphasis.
+        Everything else renders in Light font.
+        """
+        if not text:
+            return
+
+        if leading is None:
+            leading = fontsize * 1.4
+
+        # Parse text into segments: [(text, is_bold), ...]
+        segments = self._parse_bold_segments(text)
+
+        x0, y0, x1, _ = rect
+        max_width = x1 - x0
+        current_y = y0 + fontsize  # baseline of first line
+        current_x = x0
+
+        writer = pymupdf.TextWriter(page.rect)
+
+        for segment_text, is_bold in segments:
+            font = self.font_bold if is_bold else self.font_light
+            words = segment_text.split()
+
+            for word in words:
+                # Measure word width
+                word_text = word + " "
+                word_width = font.text_length(word_text, fontsize=fontsize)
+
+                # Check if word fits on current line
+                if current_x + word_width > x1 and current_x > x0:
+                    # New line
+                    current_y += leading
+                    current_x = x0
+
+                if current_y > rect.y1:
+                    break
+
+                # Write word
+                writer.append(pymupdf.Point(current_x, current_y), word_text,
+                              font=font, fontsize=fontsize)
+                current_x += word_width
+
+            if current_y > rect.y1:
+                break
+
+        writer.write_text(page, color=color)
+
+    @staticmethod
+    def _parse_bold_segments(text: str) -> list:
+        """Parse text into segments of (text, is_bold).
+
+        Supports:
+        - <b>...</b> and <strong>...</strong> HTML tags
+        - **...** markdown bold
+
+        Returns list of (text_content, is_bold) tuples.
+        """
+        # First normalize: replace <br/> with spaces
+        text = re.sub(r'<br\s*/?>', ' ', text)
+
+        # Convert **text** to <b>text</b> for uniform processing
+        text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+
+        segments = []
+        # Split by <b>...</b> and <strong>...</strong>
+        pattern = r'(<b>.*?</b>|<strong>.*?</strong>)'
+        parts = re.split(pattern, text, flags=re.DOTALL)
+
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith('<b>') and part.endswith('</b>'):
+                inner = part[3:-4].strip()
+                if inner:
+                    segments.append((inner, True))
+            elif part.startswith('<strong>') and part.endswith('</strong>'):
+                inner = part[8:-9].strip()
+                if inner:
+                    segments.append((inner, True))
+            else:
+                # Remove any remaining HTML tags
+                clean = re.sub(r'<[^>]+>', '', part).strip()
+                if clean:
+                    segments.append((clean, False))
+
+        # If no segments found (no tags at all), return whole text as plain
+        if not segments:
+            clean = re.sub(r'<[^>]+>', '', text).strip()
+            if clean:
+                segments.append((clean, False))
+
+        return segments
 
     @staticmethod
     def _strip_html(text: str) -> str:
         """Remove HTML tags from text, keeping plain content."""
-        import re
         # Replace <br/> and <br> with newlines
         text = re.sub(r'<br\s*/?>', '\n', text)
         # Remove all other HTML tags

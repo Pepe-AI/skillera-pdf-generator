@@ -16,8 +16,6 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import Paragraph
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
-from PIL import Image
-import numpy as np
 
 from config import Config
 from services.chart_generator import ChartGenerator
@@ -112,43 +110,84 @@ class PDFGenerator:
 
     # ── Header: Logo + Slogan ─────────────────────────────────────────
 
-    def _get_white_logo(self) -> BytesIO:
-        """Load skillera_logo_transparente.png and invert dark pixels to white.
-
-        The source logo has black text + light-purple icons on a transparent
-        background.  For the dark PDF background we need white text + white
-        icons while keeping the transparency intact.
+    def _get_logo(self) -> ImageReader:
+        """Load the full Skillera logo (white text + lavender icons on
+        transparent background).  Ready to use on dark backgrounds.
         """
-        img = Image.open(Config.LOGO_FULL_PATH).convert("RGBA")
-        data = np.array(img)
+        return ImageReader(Config.LOGO_FULL_PATH)
 
-        # Any pixel that is NOT fully transparent → make it white
-        # (alpha > 0 means it is part of the logo artwork)
-        opaque = data[:, :, 3] > 0
-        data[opaque, 0] = 255  # R
-        data[opaque, 1] = 255  # G
-        data[opaque, 2] = 255  # B
-        # alpha stays as-is so edges remain anti-aliased
+    def _draw_header_banner(self, c: canvas.Canvas):
+        """Draw the curved purple banner shape in the top-left corner.
 
-        out = Image.fromarray(data, "RGBA")
-        buf = BytesIO()
-        out.save(buf, format="PNG")
-        buf.seek(0)
-        return buf
+        The reference PDF shows a rounded purple blob that:
+        - Covers the top-left area of the page
+        - Has a rounded right edge (top-right corner is rounded)
+        - Curves smoothly down to a rounded bottom
+        - Contains the Skillera logo and slogan
+        """
+        banner_color = HexColor(Config.COLOR_BANNER)
+        c.setFillColor(banner_color)
+        c.setStrokeColor(banner_color)
+
+        # Key coordinates (ReportLab: Y=0 at bottom, Y=page_h at top)
+        top = self.page_h                   # 841.89
+        banner_h = 140                       # ~17% of page height
+        bottom = top - banner_h              # ~702
+
+        # Right edge position at the top of the banner
+        right_top = self.page_w * 0.57       # ~339 pt
+
+        # Radius for the top-right rounded corner
+        corner_r = 30
+
+        p = c.beginPath()
+        # Start at top-left corner (edge of page)
+        p.moveTo(0, top)
+        # Straight line across top, stopping before rounded corner
+        p.lineTo(right_top - corner_r, top)
+        # Rounded top-right corner (quarter circle arc via bezier)
+        kappa = 0.5522847498  # bezier constant for circular arcs
+        p.curveTo(
+            right_top - corner_r + corner_r * kappa, top,    # cp1
+            right_top, top - corner_r + corner_r * kappa,    # cp2
+            right_top, top - corner_r,                       # end
+        )
+        # Right edge curves down and left toward the bottom
+        # The reference shape stays fairly vertical on the right, then
+        # curves sharply left near the bottom — no long tail.
+        p.curveTo(
+            right_top, top - banner_h * 0.60,     # cp1: straight down
+            right_top - 20, top - banner_h * 0.75, # cp2: start curving left
+            right_top * 0.42, bottom + 10,         # end: bottom area
+        )
+        # Bottom curve sweeps left back to the page edge
+        p.curveTo(
+            right_top * 0.18, bottom - 10,     # cp1
+            0, bottom + 8,                     # cp2
+            0, bottom + 8,                     # end: left edge
+        )
+        # Close path back up to start
+        p.lineTo(0, top)
+        p.close()
+
+        c.drawPath(p, fill=1, stroke=0)
 
     def _draw_header(self, c: canvas.Canvas, y: float) -> float:
-        """Draw full Skillera logo (icon + name) top-left with slogan below."""
-        y -= self.margin
+        """Draw the purple banner with logo and slogan inside it."""
+        # 1) Draw the curved banner shape
+        self._draw_header_banner(c)
+
+        # 2) Place logo inside the banner — bigger, closer to top-left
+        y -= 18  # small top padding
 
         # Logo dimensions — original is ~3:1 ratio (2048x682)
-        logo_h = 50
-        logo_w = logo_h * 3  # 150 pts wide
-        logo_x = self.margin
+        logo_h = 60
+        logo_w = logo_h * 3  # ~180 pts wide
+        logo_x = self.margin - 5  # slightly closer to edge
         y -= logo_h
 
         try:
-            white_logo_buf = self._get_white_logo()
-            logo = ImageReader(white_logo_buf)
+            logo = self._get_logo()
             c.drawImage(
                 logo, logo_x, y,
                 width=logo_w, height=logo_h,
@@ -160,13 +199,14 @@ class PDFGenerator:
             c.setFont(Config.PDF_FONT_BOLD, 36)
             c.drawString(logo_x, y + 10, "Skillera")
 
-        # Slogan below logo, left-aligned
-        y -= 18
-        c.setFillColor(self.muted_color)
-        c.setFont(Config.PDF_FONT, 10)
+        # 3) Slogan just below logo
+        y -= 6
+        c.setFillColor(HexColor("#C4B5D9"))  # light lavender on banner
+        c.setFont(Config.PDF_FONT, 9)
         c.drawString(self.margin, y, "Talento en transformaci\u00f3n para el futuro")
 
-        y -= 30
+        # Space after banner before title
+        y -= 45
         return y
 
     # ── Title ─────────────────────────────────────────────────────────

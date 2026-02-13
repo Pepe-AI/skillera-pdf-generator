@@ -55,4 +55,5 @@ coverage.xml
 assets/*
 !assets/.gitkeep
 !assets/brand_colors.json
-!assets/skillera_logo.png
+!assets/logo_fondo_transparente.png
+!assets/logo_fondo_transparente.svg

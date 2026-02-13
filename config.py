@@ -12,7 +12,7 @@ class Config:
     # Base paths
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-    LOGO_FULL_PATH = os.path.join(ASSETS_DIR, "skillera_logo_transparente.png")
+    LOGO_FULL_PATH = os.path.join(ASSETS_DIR, "logo_fondo_transparente.png")
 
     # Load brand colors from JSON
     _colors_path = os.path.join(ASSETS_DIR, "brand_colors.json")
@@ -30,6 +30,9 @@ class Config:
     # Gradient background colors (RGB 0-1 range)
     GRADIENT_TOP_R, GRADIENT_TOP_G, GRADIENT_TOP_B = 0.10, 0.04, 0.24
     GRADIENT_BOT_R, GRADIENT_BOT_G, GRADIENT_BOT_B = 0.18, 0.10, 0.41
+
+    # Header banner (purple blob, brighter than background)
+    COLOR_BANNER = "#4517A4"
 
     # PDF settings (A4 = 595.28 x 841.89 points)
     PDF_PAGE_WIDTH = 595.28

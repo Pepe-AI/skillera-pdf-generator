@@ -263,7 +263,9 @@ class PDFGenerator:
         if not learning_path:
             return
 
-        rect = pymupdf.Rect(27, 612, 559, 820)
+        # Title "Ruta de Aprendizaje Recomendada" ends at y=616.9
+        # Add ~10pt gap (same as summary section) → start at y=627
+        rect = pymupdf.Rect(27, 627, 559, 820)
         self._insert_rich_paragraph(page, rect, learning_path,
                                     fontsize=12.5, color=_WHITE,
                                     leading=17.26)

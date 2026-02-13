@@ -57,3 +57,4 @@ assets/*
 !assets/brand_colors.json
 !assets/logo_fondo_transparente.png
 !assets/logo_fondo_transparente.svg
+!assets/template.pdf

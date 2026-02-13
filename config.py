@@ -13,6 +13,7 @@ class Config:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     ASSETS_DIR = os.path.join(BASE_DIR, "assets")
     LOGO_FULL_PATH = os.path.join(ASSETS_DIR, "logo_fondo_transparente.png")
+    TEMPLATE_PDF_PATH = os.path.join(ASSETS_DIR, "template.pdf")
 
     # Load brand colors from JSON
     _colors_path = os.path.join(ASSETS_DIR, "brand_colors.json")

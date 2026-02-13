@@ -16,6 +16,8 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import Paragraph
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+from PIL import Image
+import numpy as np
 
 from config import Config
 from services.chart_generator import ChartGenerator
@@ -106,37 +108,57 @@ class PDFGenerator:
             y = self.page_h - (i * strip_h)
             c.rect(0, y - strip_h, self.page_w, strip_h + 0.5, fill=1, stroke=0)
 
-        # Purple accent bar at the very top
-        c.setFillColor(self.primary_color)
-        c.rect(0, self.page_h - 5, self.page_w, 5, fill=1, stroke=0)
+        # (No top accent bar — clean gradient only)
 
     # ── Header: Logo + Slogan ─────────────────────────────────────────
 
+    def _get_white_logo(self) -> BytesIO:
+        """Load skillera_logo_transparente.png and invert dark pixels to white.
+
+        The source logo has black text + light-purple icons on a transparent
+        background.  For the dark PDF background we need white text + white
+        icons while keeping the transparency intact.
+        """
+        img = Image.open(Config.LOGO_FULL_PATH).convert("RGBA")
+        data = np.array(img)
+
+        # Any pixel that is NOT fully transparent → make it white
+        # (alpha > 0 means it is part of the logo artwork)
+        opaque = data[:, :, 3] > 0
+        data[opaque, 0] = 255  # R
+        data[opaque, 1] = 255  # G
+        data[opaque, 2] = 255  # B
+        # alpha stays as-is so edges remain anti-aliased
+
+        out = Image.fromarray(data, "RGBA")
+        buf = BytesIO()
+        out.save(buf, format="PNG")
+        buf.seek(0)
+        return buf
+
     def _draw_header(self, c: canvas.Canvas, y: float) -> float:
-        """Draw icon + 'Skillera' text top-left with slogan below."""
+        """Draw full Skillera logo (icon + name) top-left with slogan below."""
         y -= self.margin
 
-        # Icon: left-aligned
-        icon_size = 55
-        icon_x = self.margin
-        y -= icon_size
+        # Logo dimensions — original is ~3:1 ratio (2048x682)
+        logo_h = 50
+        logo_w = logo_h * 3  # 150 pts wide
+        logo_x = self.margin
+        y -= logo_h
 
         try:
-            logo = ImageReader(Config.LOGO_ICON_PATH)
+            white_logo_buf = self._get_white_logo()
+            logo = ImageReader(white_logo_buf)
             c.drawImage(
-                logo, icon_x, y,
-                width=icon_size, height=icon_size,
+                logo, logo_x, y,
+                width=logo_w, height=logo_h,
                 preserveAspectRatio=True, mask="auto",
             )
         except Exception:
-            pass
-
-        # "Skillera" text next to icon, in white
-        text_x = icon_x + icon_size + 8
-        text_y = y + (icon_size / 2) - 14  # Vertically center with icon
-        c.setFillColor(self.text_color)
-        c.setFont(Config.PDF_FONT_BOLD, 36)
-        c.drawString(text_x, text_y, "Skillera")
+            # Fallback: just draw text
+            c.setFillColor(self.text_color)
+            c.setFont(Config.PDF_FONT_BOLD, 36)
+            c.drawString(logo_x, y + 10, "Skillera")
 
         # Slogan below logo, left-aligned
         y -= 18

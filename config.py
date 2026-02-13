@@ -12,7 +12,6 @@ class Config:
     # Base paths
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-    LOGO_ICON_PATH = os.path.join(ASSETS_DIR, "skillera_logo.png")
     LOGO_FULL_PATH = os.path.join(ASSETS_DIR, "skillera_logo_transparente.png")
 
     # Load brand colors from JSON

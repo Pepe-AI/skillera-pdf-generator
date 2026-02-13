@@ -109,20 +109,28 @@ class PDFGenerator:
     # ── Results ──────────────────────────────────────────────────────
 
     def _fill_results(self, page, results: dict):
-        """Fill overall level and score."""
-        level = results.get("overall_level", "")
-        score = results.get("overall_score", 0)
+        """Fill overall level and score.
 
+        Scoring system:
+        - 4 dimensions × 2 questions × scale 1-5 = max 10 per dim, max 40 total
+        - n8n sends overall_score as percentage (0-100)
+        - PDF must display raw score: e.g. "23/ 40"
+        """
+        level = results.get("overall_level", "")
+        score_pct = results.get("overall_score", 0)  # percentage 0-100
+
+        # Convert percentage to raw score (scale: max 40 points)
         num_dims = len(results.get("dimensions", []))
-        max_per_dim = 35
-        max_score = num_dims * max_per_dim if num_dims > 0 else 140
+        max_per_dim = 10   # each dimension: 2 questions × scale 1-5
+        max_score = num_dims * max_per_dim if num_dims > 0 else 40
+        raw_score = round(score_pct * max_score / 100.0)
 
         # "Tu Resultado General:" x1=218.9, y_bottom=280.8
         self._insert_text(page, 221, 279, level.upper(),
                           fontsize=13, color=_CYAN, bold=True)
 
         # "Puntuación Global:" x1=192.1, y_bottom=302.6
-        score_text = f"{score:.0f}/ {max_score}"
+        score_text = f"{raw_score}/ {max_score}"
         self._insert_text(page, 194, 301, score_text,
                           fontsize=13, color=_WHITE, bold=True)
 
@@ -147,27 +155,36 @@ class PDFGenerator:
     def _fill_chart_bars(self, page, results: dict):
         """Draw horizontal bars for each dimension score.
 
+        Scoring: each dimension has max 10 raw points (2 questions × scale 1-5).
+        n8n sends scores as percentages (0-100).  We convert back to raw (0-10).
+
+        Template chart axis goes 0-35 but real scale is 0-10, so we map
+        raw_score onto the axis proportionally:
+            pixel_x = chart_x0 + (raw_score / 10) * axis_length
+
         Template chart area (PyMuPDF coords, Y from top):
-        - Chart left edge (0 score): x = 212.3
-        - Chart right edge (35 score): x = 512.4
-        - Bar rows (4 bars, measured from template eraser rects):
+        - Grid line at score 0:  x = 214.8
+        - Grid line at score 35: x = 512.4
+        - Bar rows (4 bars):
             Row 0: y = 441.2 to 471.8  (I. Liderazgo e Influencia Social)
-            Row 1: y = 475.2 to 505.8  (II. Empatía y Escucha Activa)
-            Row 2: y = 509.2 to 539.9  (III. Delegación y Desarrollo del Talento)
+            Row 1: y = 475.2 to 505.8  (II. Empatia y Escucha Activa)
+            Row 2: y = 509.2 to 539.9  (III. Delegacion y Desarrollo del Talento)
             Row 3: y = 543.3 to 573.9  (IV. Resiliencia y Adaptabilidad)
         """
         dimensions = results.get("dimensions", [])
         dim_levels = results.get("dimension_levels", [])
 
-        chart_x0 = 212.3   # x where score=0
-        chart_x35 = 512.4  # x where score=35
-        px_per_unit = (chart_x35 - chart_x0) / 35.0  # ~8.57 px per score unit
+        chart_x0 = 214.8   # x at score=0 (grid line)
+        chart_x35 = 512.4  # x at score=35 (grid line)
+        axis_length = chart_x35 - chart_x0  # total pixel width of axis
+        max_raw = 10        # max raw score per dimension
+        corner_r = 2.5      # rounded corner radius (matches template)
 
         # Y positions for each bar row (PyMuPDF coords, Y from top of page)
         bar_rows = [
             (441.2, 471.8),  # Row 0 — I. Liderazgo e Influencia Social
-            (475.2, 505.8),  # Row 1 — II. Empatía y Escucha Activa
-            (509.2, 539.9),  # Row 2 — III. Delegación y Desarrollo del Talento
+            (475.2, 505.8),  # Row 1 — II. Empatia y Escucha Activa
+            (509.2, 539.9),  # Row 2 — III. Delegacion y Desarrollo del Talento
             (543.3, 573.9),  # Row 3 — IV. Resiliencia y Adaptabilidad
         ]
 
@@ -175,7 +192,10 @@ class PDFGenerator:
             if i >= len(bar_rows):
                 break
 
-            score = dim.get("score", 0) if isinstance(dim, dict) else dim.score
+            score_pct = dim.get("score", 0) if isinstance(dim, dict) else dim.score
+            # Convert percentage (0-100) to raw score (0-10)
+            raw_score = score_pct * max_raw / 100.0
+
             level = "Intermedio"
             if i < len(dim_levels):
                 lv = dim_levels[i]
@@ -184,21 +204,31 @@ class PDFGenerator:
             # Bar color based on level
             bar_color = _BAR_COLORS.get(level, _BAR_COLORS["Intermedio"])
 
-            # Calculate bar width
-            bar_width = score * px_per_unit
             y_top, y_bottom = bar_rows[i]
 
-            # Erase existing bar (draw bg-colored rect over it)
-            erase_rect = pymupdf.Rect(chart_x0, y_top, chart_x35 + 5, y_bottom)
+            # Erase the existing template bar (covers full area including corners)
+            erase_rect = pymupdf.Rect(
+                chart_x0 - corner_r - 1, y_top,
+                chart_x35 + corner_r + 1, y_bottom,
+            )
             page.draw_rect(erase_rect, color=None, fill=_BG_RGB)
 
-            # Draw new bar
-            if bar_width > 0:
+            # Draw new bar with rounded corners
+            if raw_score > 0:
+                # Map raw score (0-10) to axis pixels (0 to axis_length)
+                bar_px = (raw_score / max_raw) * axis_length
+                bar_x_end = chart_x0 + bar_px
+                # Clamp to chart boundary
+                bar_x_end = min(bar_x_end, chart_x35)
+
                 bar_rect = pymupdf.Rect(
-                    chart_x0, y_top,
-                    chart_x0 + bar_width, y_bottom,
+                    chart_x0 - corner_r, y_top,
+                    bar_x_end + corner_r, y_bottom,
                 )
-                page.draw_rect(bar_rect, color=None, fill=bar_color)
+                page.draw_rect(
+                    bar_rect, color=None, fill=bar_color,
+                    radius=corner_r / (y_bottom - y_top),
+                )
 
     # ── Learning path ────────────────────────────────────────────────
 

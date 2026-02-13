@@ -7,9 +7,9 @@ from typing import Optional
 
 
 class DimensionScore(BaseModel):
-    """A single dimension with its name and numeric score."""
-    name: str = Field(..., description="Dimension name, e.g. 'Pensamiento Estratégico'")
-    score: float = Field(..., ge=0, le=100, description="Score from 0 to 100")
+    """A single dimension with its name and numeric score (percentage)."""
+    name: str = Field(..., description="Dimension name, e.g. 'Liderazgo e Influencia Social'")
+    score: float = Field(..., ge=0, le=100, description="Score as percentage 0-100 (raw scale: 0-10 per dim)")
 
 
 class DimensionLevel(BaseModel):
@@ -28,7 +28,7 @@ class UserData(BaseModel):
 class Results(BaseModel):
     """Overall result plus per-dimension breakdown."""
     overall_level: str = Field(..., description="General level: Avanzado | Intermedio | Principiante")
-    overall_score: float = Field(..., ge=0, le=100, description="General score 0-100")
+    overall_score: float = Field(..., ge=0, le=100, description="General score as percentage 0-100 (raw scale: 0-40)")
     dimensions: list[DimensionScore] = Field(..., min_length=1, description="List of dimension scores")
     dimension_levels: list[DimensionLevel] = Field(..., min_length=1, description="Level per dimension")
 

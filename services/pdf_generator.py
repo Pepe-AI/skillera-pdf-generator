@@ -103,9 +103,28 @@ class PDFGenerator:
         display_date = user.get("date") or date.today().isoformat()
 
         # Name — Montserrat Bold Italic, 12.97pt, #F4F0F9
-        self._insert_font_text(page, 160, 226, name,
+        # Auto-shrink font if name is too long (must fit before "Puesto/Rol:" at x=270)
+        # Minimum size 8pt; if still too long, truncate with "..."
+        name_x = 160
+        max_width = 105  # pixels available (265 - 160)
+        name_size = 12.97
+        min_size = 8.0
+        display_name = name
+        name_width = self.font_bold_italic.text_length(display_name, fontsize=name_size)
+        if name_width > max_width and display_name:
+            name_size = max(min_size, name_size * max_width / name_width)
+            # If at min size it still overflows, truncate
+            name_width = self.font_bold_italic.text_length(display_name, fontsize=name_size)
+            if name_width > max_width:
+                while len(display_name) > 1:
+                    display_name = display_name[:-1]
+                    test = display_name.rstrip() + "..."
+                    if self.font_bold_italic.text_length(test, fontsize=name_size) <= max_width:
+                        display_name = test
+                        break
+        self._insert_font_text(page, name_x, 226, display_name,
                                font=self.font_bold_italic,
-                               fontsize=12.97, color=_LIGHT)
+                               fontsize=name_size, color=_LIGHT)
 
         # Position — Montserrat Bold, 12.97pt, #F4F0F9
         self._insert_font_text(page, 374, 226, position,

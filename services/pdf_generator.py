@@ -1,6 +1,9 @@
 """
 PDF generation service module.
 Generates branded leadership diagnostic PDF reports using ReportLab.
+Layout matches the reference design: gradient background, large logo
+top-left, large centered title, left-aligned user data, cyan section
+titles, chart with legend on top, and rich text support.
 """
 
 from io import BytesIO
@@ -12,7 +15,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import Paragraph
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 
 from config import Config
 from services.chart_generator import ChartGenerator
@@ -34,8 +37,9 @@ class PDFGenerator:
         self.secondary_color = HexColor(Config.COLOR_SECONDARY)
         self.text_color = HexColor(Config.COLOR_TEXT_LIGHT)
         self.muted_color = HexColor("#A0AEC0")
+        self.cyan_color = HexColor(Config.COLOR_CYAN)
 
-        # Level-to-color mapping for result badge
+        # Level-to-color mapping
         self.level_colors = {
             "Avanzado": HexColor(Config.CHART_COLORS["avanzado"]),
             "Intermedio": HexColor(Config.CHART_COLORS["intermedio"]),
@@ -58,8 +62,8 @@ class PDFGenerator:
         # Track vertical position (Y from bottom, starts at top)
         y = self.page_h
 
-        # === BACKGROUND ===
-        self._draw_background(c)
+        # === BACKGROUND (gradient) ===
+        self._draw_gradient_background(c)
 
         # === SECTION 1: LOGO + SLOGAN ===
         y = self._draw_header(c, y)
@@ -73,187 +77,209 @@ class PDFGenerator:
         # === SECTION 4: GENERAL RESULT ===
         y = self._draw_general_result(c, y, data["results"])
 
-        # === SECTION 5: SUMMARY ===
-        y = self._draw_text_section(c, y, "RESUMEN EJECUTIVO", data["ai_content"]["summary"])
+        # === SECTION 5: SUMMARY (no section title, direct paragraph) ===
+        y = self._draw_summary(c, y, data["ai_content"]["summary"])
 
-        # === SECTION 6: CHART ===
-        y = self._draw_chart(c, y, data["results"])
+        # === SECTION 6: CHART with title ===
+        y = self._draw_chart_section(c, y, data["results"])
 
         # === SECTION 7: LEARNING PATH ===
-        y = self._draw_text_section(c, y, "RUTA DE APRENDIZAJE", data["ai_content"]["learning_path"])
-
-        # === SECTION 8: FOOTER ===
-        self._draw_footer(c)
+        y = self._draw_learning_path(c, y, data["ai_content"]["learning_path"])
 
         c.save()
         buffer.seek(0)
         return buffer
 
-    def _draw_background(self, c: canvas.Canvas):
-        """Fill the entire page with the dark background color."""
-        c.setFillColor(self.bg_color)
-        c.rect(0, 0, self.page_w, self.page_h, fill=1, stroke=0)
+    # ── Background ────────────────────────────────────────────────────
+
+    def _draw_gradient_background(self, c: canvas.Canvas):
+        """Draw a purple gradient background matching the reference PDF."""
+        strips = 120
+        strip_h = self.page_h / strips
+
+        for i in range(strips):
+            t = i / strips  # 0 = top, 1 = bottom
+            r = Config.GRADIENT_TOP_R + t * (Config.GRADIENT_BOT_R - Config.GRADIENT_TOP_R)
+            g = Config.GRADIENT_TOP_G + t * (Config.GRADIENT_BOT_G - Config.GRADIENT_TOP_G)
+            b = Config.GRADIENT_TOP_B + t * (Config.GRADIENT_BOT_B - Config.GRADIENT_TOP_B)
+            c.setFillColorRGB(r, g, b)
+            y = self.page_h - (i * strip_h)
+            c.rect(0, y - strip_h, self.page_w, strip_h + 0.5, fill=1, stroke=0)
+
+        # Purple accent bar at the very top
+        c.setFillColor(self.primary_color)
+        c.rect(0, self.page_h - 5, self.page_w, 5, fill=1, stroke=0)
+
+    # ── Header: Logo + Slogan ─────────────────────────────────────────
 
     def _draw_header(self, c: canvas.Canvas, y: float) -> float:
-        """Draw logo and slogan at top of page."""
-        y -= self.margin  # Top margin
+        """Draw icon + 'Skillera' text top-left with slogan below."""
+        y -= self.margin
 
-        # Logo: centered, 60x60pt
-        logo_h = 60
-        logo_w = 60
-        logo_x = (self.page_w - logo_w) / 2
-        y -= logo_h
+        # Icon: left-aligned
+        icon_size = 55
+        icon_x = self.margin
+        y -= icon_size
 
         try:
-            logo = ImageReader(Config.LOGO_PATH)
+            logo = ImageReader(Config.LOGO_ICON_PATH)
             c.drawImage(
-                logo, logo_x, y,
-                width=logo_w, height=logo_h,
+                logo, icon_x, y,
+                width=icon_size, height=icon_size,
                 preserveAspectRatio=True, mask="auto",
             )
         except Exception:
-            pass  # Skip logo if not found
+            pass
 
-        # Slogan below logo
+        # "Skillera" text next to icon, in white
+        text_x = icon_x + icon_size + 8
+        text_y = y + (icon_size / 2) - 14  # Vertically center with icon
+        c.setFillColor(self.text_color)
+        c.setFont(Config.PDF_FONT_BOLD, 36)
+        c.drawString(text_x, text_y, "Skillera")
+
+        # Slogan below logo, left-aligned
         y -= 18
-        c.setFillColor(self.secondary_color)
+        c.setFillColor(self.muted_color)
         c.setFont(Config.PDF_FONT, 10)
-        c.drawCentredString(self.page_w / 2, y, Config.SLOGAN)
+        c.drawString(self.margin, y, "Talento en transformaci\u00f3n para el futuro")
 
-        y -= 15
+        y -= 30
         return y
+
+    # ── Title ─────────────────────────────────────────────────────────
 
     def _draw_title(self, c: canvas.Canvas, y: float) -> float:
-        """Draw main report title."""
-        y -= 10
+        """Draw large centered report title."""
         c.setFillColor(self.text_color)
         c.setFont(Config.PDF_FONT_BOLD, Config.PDF_FONT_SIZE_TITLE)
-        c.drawCentredString(self.page_w / 2, y, "DIAGNOSTICO PERSONALIZADO")
-        y -= 22
-        c.drawCentredString(self.page_w / 2, y, "DE LIDERAZGO 2030")
 
-        # Decorative line
-        y -= 12
-        c.setStrokeColor(self.primary_color)
-        c.setLineWidth(2)
-        line_half = 100
-        c.line(self.page_w / 2 - line_half, y, self.page_w / 2 + line_half, y)
+        # Two lines centered
+        c.drawCentredString(self.page_w / 2, y, "DIAGN\u00d3STICO PERSONALIZADO DE")
+        y -= 34
+        c.drawCentredString(self.page_w / 2, y, "LIDERAZGO 2030")
 
-        y -= 15
+        y -= 30
         return y
+
+    # ── User Data ─────────────────────────────────────────────────────
 
     def _draw_user_data(self, c: canvas.Canvas, y: float, user: dict) -> float:
-        """Draw name, position, and date."""
-        c.setFillColor(self.text_color)
-        c.setFont(Config.PDF_FONT_BOLD, 12)
-        c.drawCentredString(self.page_w / 2, y, user["name"].upper())
-
-        y -= 16
-        c.setFont(Config.PDF_FONT, 10)
-        c.setFillColor(self.secondary_color)
-        c.drawCentredString(self.page_w / 2, y, user["position"])
-
-        y -= 14
+        """Draw user info: name, position, date — left-aligned, matching reference."""
         display_date = user.get("date") or date.today().isoformat()
-        c.setFont(Config.PDF_FONT, 9)
-        c.setFillColor(self.muted_color)
-        c.drawCentredString(self.page_w / 2, y, f"Fecha: {display_date}")
 
-        y -= 20
+        # Line 1: "Elaborado para: Name Puesto/Rol: Position"
+        style_user = ParagraphStyle(
+            "user_data",
+            fontName=Config.PDF_FONT,
+            fontSize=11,
+            textColor=self.text_color,
+            leading=16,
+        )
+        line1 = (
+            f'<b>Elaborado para:</b> <i>{user["name"]}</i> '
+            f'<b>Puesto/Rol: {user["position"]}</b>'
+        )
+        para1 = Paragraph(line1, style_user)
+        pw1, ph1 = para1.wrap(self.content_w, 50)
+        para1.drawOn(c, self.margin, y - ph1)
+        y -= (ph1 + 4)
+
+        # Line 2: "Fecha de Emisión: date"
+        line2 = f'<b>Fecha de Emisi\u00f3n: {display_date}</b>'
+        para2 = Paragraph(line2, style_user)
+        pw2, ph2 = para2.wrap(self.content_w, 30)
+        para2.drawOn(c, self.margin, y - ph2)
+        y -= (ph2 + 20)
+
         return y
+
+    # ── General Result ────────────────────────────────────────────────
 
     def _draw_general_result(self, c: canvas.Canvas, y: float, results: dict) -> float:
-        """Draw overall level badge and score."""
+        """Draw overall level and score — matching reference layout."""
         level = results["overall_level"]
         score = results["overall_score"]
-        level_color = self.level_colors.get(level, self.secondary_color)
 
-        # Label
-        c.setFillColor(self.text_color)
-        c.setFont(Config.PDF_FONT_BOLD, 11)
-        c.drawCentredString(self.page_w / 2, y, "RESULTADO GENERAL")
-        y -= 25
+        # Calculate max score based on number of dimensions
+        num_dims = len(results.get("dimensions", []))
+        max_per_dim = 35
+        max_score = num_dims * max_per_dim if num_dims > 0 else 140
 
-        # Rounded rectangle badge
-        badge_w = 180
-        badge_h = 32
-        badge_x = (self.page_w - badge_w) / 2
-        badge_y = y - badge_h + 5
+        # Line 1: "Tu Resultado General: INTERMEDIO" in cyan
+        style_result = ParagraphStyle(
+            "result_title",
+            fontName=Config.PDF_FONT,
+            fontSize=13,
+            textColor=HexColor(Config.COLOR_CYAN),
+            leading=18,
+        )
+        line1 = f'Tu Resultado General: <b>{level.upper()}</b>'
+        para1 = Paragraph(line1, style_result)
+        pw1, ph1 = para1.wrap(self.content_w, 30)
+        para1.drawOn(c, self.margin, y - ph1)
+        y -= (ph1 + 4)
 
-        c.setFillColor(level_color)
-        c.roundRect(badge_x, badge_y, badge_w, badge_h, radius=8, fill=1, stroke=0)
+        # Line 2: "Puntuación Global: score/ max" in white bold
+        style_score = ParagraphStyle(
+            "result_score",
+            fontName=Config.PDF_FONT_BOLD,
+            fontSize=13,
+            textColor=self.text_color,
+            leading=18,
+        )
+        score_display = f"{score:.0f}"
+        line2 = f'<b>Puntuaci\u00f3n Global: {score_display}/ {max_score}</b>'
+        para2 = Paragraph(line2, style_score)
+        pw2, ph2 = para2.wrap(self.content_w, 30)
+        para2.drawOn(c, self.margin, y - ph2)
+        y -= (ph2 + 12)
 
-        # Level text inside badge
-        c.setFillColor(HexColor("#FFFFFF"))
-        c.setFont(Config.PDF_FONT_BOLD, 14)
-        c.drawCentredString(self.page_w / 2, badge_y + 10, level.upper())
-
-        y = badge_y - 8
-
-        # Score below badge
-        c.setFillColor(self.text_color)
-        c.setFont(Config.PDF_FONT_BOLD, 20)
-        c.drawCentredString(self.page_w / 2, y, f"{score:.0f}%")
-
-        y -= 8
-        c.setFont(Config.PDF_FONT, 9)
-        c.setFillColor(self.muted_color)
-        c.drawCentredString(self.page_w / 2, y, "Puntuacion general")
-
-        y -= 25
         return y
 
-    def _draw_text_section(self, c: canvas.Canvas, y: float, title: str, body: str) -> float:
-        """Draw a titled text section with word-wrapped body."""
-        # Section title
-        c.setFillColor(self.primary_color)
-        c.setFont(Config.PDF_FONT_BOLD, 12)
-        c.drawString(self.margin, y, title)
-        y -= 5
+    # ── Summary (no section title) ───────────────────────────────────
 
-        # Underline
-        c.setStrokeColor(self.primary_color)
-        c.setLineWidth(1)
-        title_width = c.stringWidth(title, Config.PDF_FONT_BOLD, 12)
-        c.line(self.margin, y, self.margin + title_width, y)
-        y -= 14
-
-        # Body text with word wrap using Paragraph
+    def _draw_summary(self, c: canvas.Canvas, y: float, summary: str) -> float:
+        """Draw the AI summary as a direct paragraph (no section header)."""
         style = ParagraphStyle(
-            "body_text",
+            "summary_text",
             fontName=Config.PDF_FONT,
             fontSize=Config.PDF_FONT_SIZE_BODY,
             textColor=self.text_color,
             leading=14,
             alignment=TA_JUSTIFY,
         )
-        para = Paragraph(body.replace("\n", "<br/>"), style)
-        para_w, para_h = para.wrap(self.content_w, 500)
+        para = Paragraph(summary.replace("\n", "<br/>"), style)
+        para_w, para_h = para.wrap(self.content_w, 400)
 
-        # Check if we need a new page
+        # Check page space
         if y - para_h < Config.PDF_MARGIN_BOTTOM + 40:
             c.showPage()
-            self._draw_background(c)
+            self._draw_gradient_background(c)
             y = self.page_h - self.margin
 
         para.drawOn(c, self.margin, y - para_h)
-        y -= (para_h + 15)
+        y -= (para_h + 18)
 
         return y
 
-    def _draw_chart(self, c: canvas.Canvas, y: float, results: dict) -> float:
-        """Generate and embed the competency chart."""
-        # Section title
-        title_text = "COMPETENCIAS POR DIMENSION"
-        c.setFillColor(self.primary_color)
-        c.setFont(Config.PDF_FONT_BOLD, 12)
-        c.drawString(self.margin, y, title_text)
-        y -= 5
-        c.setStrokeColor(self.primary_color)
-        c.setLineWidth(1)
-        title_width = c.stringWidth(title_text, Config.PDF_FONT_BOLD, 12)
-        c.line(self.margin, y, self.margin + title_width, y)
-        y -= 10
+    # ── Chart Section ─────────────────────────────────────────────────
+
+    def _draw_chart_section(self, c: canvas.Canvas, y: float, results: dict) -> float:
+        """Draw section title + competency chart."""
+        # Section title in cyan
+        title_text = "Perfil de Competencias: Tu Puntuaci\u00f3n por Dimensi\u00f3n"
+        style_title = ParagraphStyle(
+            "chart_title",
+            fontName=Config.PDF_FONT_BOLD,
+            fontSize=13,
+            textColor=HexColor(Config.COLOR_CYAN),
+            leading=16,
+        )
+        para_title = Paragraph(title_text, style_title)
+        ptw, pth = para_title.wrap(self.content_w, 30)
+        para_title.drawOn(c, self.margin, y - pth)
+        y -= (pth + 8)
 
         # Generate chart image
         dimensions = [
@@ -269,12 +295,12 @@ class PDFGenerator:
         # Embed in PDF
         chart_img = ImageReader(chart_buffer)
         chart_w = self.content_w
-        chart_h = 180
+        chart_h = 190
 
         # Check page space
         if y - chart_h < Config.PDF_MARGIN_BOTTOM + 40:
             c.showPage()
-            self._draw_background(c)
+            self._draw_gradient_background(c)
             y = self.page_h - self.margin
 
         chart_y = y - chart_h
@@ -284,19 +310,54 @@ class PDFGenerator:
             preserveAspectRatio=True, mask="auto",
         )
 
-        y = chart_y - 15
+        y = chart_y - 12
         return y
 
-    def _draw_footer(self, c: canvas.Canvas):
-        """Draw footer at bottom of current page."""
-        footer_y = 25
-        c.setFillColor(self.muted_color)
-        c.setFont(Config.PDF_FONT, 7)
-        c.drawCentredString(
-            self.page_w / 2, footer_y,
-            f"\u00a9 {date.today().year} Skillera. Todos los derechos reservados.",
+    # ── Learning Path ─────────────────────────────────────────────────
+
+    def _draw_learning_path(self, c: canvas.Canvas, y: float, learning_path: str) -> float:
+        """Draw the learning path section with cyan title and rich text body."""
+        # Section title in cyan italic-bold
+        title_text = "Ruta de Aprendizaje Recomendada"
+        style_title = ParagraphStyle(
+            "lp_title",
+            fontName=Config.PDF_FONT_BOLD_ITALIC,
+            fontSize=13,
+            textColor=HexColor(Config.COLOR_CYAN),
+            leading=16,
         )
-        c.drawCentredString(
-            self.page_w / 2, footer_y - 10,
-            "Este documento es confidencial y fue generado automaticamente.",
+        para_title = Paragraph(title_text, style_title)
+        ptw, pth = para_title.wrap(self.content_w, 30)
+
+        # Check page space for title + some body text
+        if y - pth - 60 < Config.PDF_MARGIN_BOTTOM:
+            c.showPage()
+            self._draw_gradient_background(c)
+            y = self.page_h - self.margin
+
+        para_title.drawOn(c, self.margin, y - pth)
+        y -= (pth + 8)
+
+        # Body text — supports <b> tags for bold words
+        style_body = ParagraphStyle(
+            "lp_body",
+            fontName=Config.PDF_FONT,
+            fontSize=Config.PDF_FONT_SIZE_BODY,
+            textColor=self.text_color,
+            leading=14,
+            alignment=TA_JUSTIFY,
         )
+        body_text = learning_path.replace("\n", "<br/>")
+        para_body = Paragraph(body_text, style_body)
+        pbw, pbh = para_body.wrap(self.content_w, 500)
+
+        # Check page space
+        if y - pbh < Config.PDF_MARGIN_BOTTOM:
+            c.showPage()
+            self._draw_gradient_background(c)
+            y = self.page_h - self.margin
+
+        para_body.drawOn(c, self.margin, y - pbh)
+        y -= (pbh + 15)
+
+        return y

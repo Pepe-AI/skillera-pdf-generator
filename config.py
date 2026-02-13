@@ -12,7 +12,8 @@ class Config:
     # Base paths
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-    LOGO_PATH = os.path.join(ASSETS_DIR, "skillera_logo.png")
+    LOGO_ICON_PATH = os.path.join(ASSETS_DIR, "skillera_logo.png")
+    LOGO_FULL_PATH = os.path.join(ASSETS_DIR, "skillera_logo_transparente.png")
 
     # Load brand colors from JSON
     _colors_path = os.path.join(ASSETS_DIR, "brand_colors.json")
@@ -27,19 +28,25 @@ class Config:
     COLOR_TEXT_DARK = BRAND_COLORS["text_dark"]         # #1A1A2E
     CHART_COLORS = BRAND_COLORS["chart_colors"]         # avanzado/intermedio/principiante
 
+    # Gradient background colors (RGB 0-1 range)
+    GRADIENT_TOP_R, GRADIENT_TOP_G, GRADIENT_TOP_B = 0.10, 0.04, 0.24
+    GRADIENT_BOT_R, GRADIENT_BOT_G, GRADIENT_BOT_B = 0.18, 0.10, 0.41
+
     # PDF settings (A4 = 595.28 x 841.89 points)
     PDF_PAGE_WIDTH = 595.28
     PDF_PAGE_HEIGHT = 841.89
-    PDF_MARGIN_LEFT = 50
-    PDF_MARGIN_RIGHT = 50
-    PDF_MARGIN_TOP = 50
-    PDF_MARGIN_BOTTOM = 50
+    PDF_MARGIN_LEFT = 40
+    PDF_MARGIN_RIGHT = 40
+    PDF_MARGIN_TOP = 40
+    PDF_MARGIN_BOTTOM = 40
     PDF_CONTENT_WIDTH = PDF_PAGE_WIDTH - PDF_MARGIN_LEFT - PDF_MARGIN_RIGHT
 
     # Fonts
     PDF_FONT = "Helvetica"
     PDF_FONT_BOLD = "Helvetica-Bold"
-    PDF_FONT_SIZE_TITLE = 18
+    PDF_FONT_ITALIC = "Helvetica-Oblique"
+    PDF_FONT_BOLD_ITALIC = "Helvetica-BoldOblique"
+    PDF_FONT_SIZE_TITLE = 28
     PDF_FONT_SIZE_SUBTITLE = 14
     PDF_FONT_SIZE_BODY = 10
     PDF_FONT_SIZE_SMALL = 8
@@ -49,7 +56,10 @@ class Config:
     CHART_FIGSIZE = (10, 4)
 
     # Branding
-    SLOGAN = "Desarrolla el l\u00edder que el futuro necesita"
+    SLOGAN = "Talento en transformaci\u00f3n para el futuro"
+
+    # Section title color (cyan from reference PDF)
+    COLOR_CYAN = "#38BDF8"
 
     @classmethod
     def ensure_directories(cls):

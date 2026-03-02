@@ -30,6 +30,9 @@ from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
 # ASSETS_DIR — resolved relative to the project root (one level up from services/)
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
 
+# Custom page size: infographic vertical format (same width as A4, taller)
+IE_PAGE_SIZE = (595.28, 1058.0)  # width x height en puntos
+
 # ── Paleta exacta ──────────────────────────────────────────────────────────────
 C_WHITE    = HexColor("#FFFFFF")
 C_TEAL     = HexColor("#3CCBB2")       # ¿Qué es IE?, separador
@@ -215,7 +218,7 @@ def draw_gradient_bg(c: canvas.Canvas, page_w: float, page_h: float):
     Usa bandas horizontales estrechas (1pt) para aproximar el gradiente.
     """
     # Gradiente en el header (~top 31% = 263pt)
-    header_h = 263
+    header_h = 310
     steps = header_h  # 1 banda por punto
 
     # Colores de inicio y fin del gradiente (RGB 0-1)
@@ -247,20 +250,20 @@ class IEPDFGenerator:
     Layout de una sola página A4 (595 x 842 pt).
     """
 
-    W, H = A4   # 595.28 × 841.89
+    W, H = IE_PAGE_SIZE   # 595.28 × 1058.0
     ML = 17     # margin left (≈ 42/1440 * 595)
     MR = 17     # margin right
     CW = W - ML - MR  # content width ≈ 561
 
     # Constantes de layout (en pts A4, calculadas de coordenadas originales)
-    HEADER_H    = 245   # altura zona header (gradiente)
-    FOOTER_H    =  52   # altura zona footer
+    HEADER_H    = 310   # altura zona header (gradiente)
+    FOOTER_H    =  62   # altura zona footer
     Y_MIN       =  FOOTER_H + 2  # buffer mínimo
 
     def generate(self, name: str, position: str,
                  total_score: float, nivel: str) -> BytesIO:
         buf = BytesIO()
-        c = canvas.Canvas(buf, pagesize=A4)
+        c = canvas.Canvas(buf, pagesize=IE_PAGE_SIZE)
         content = IE_CONTENT[nivel]
 
         draw_gradient_bg(c, self.W, self.H)
@@ -277,9 +280,7 @@ class IEPDFGenerator:
         y = self.H - self.HEADER_H  # cursor empieza justo debajo del header
 
         y = self._draw_informe_title(c, y)
-        y = self._draw_user_score(c, y, name, position, total_score)
-        y = self._draw_badge(c, y, nivel)
-        y = self._draw_frase(c, y, nivel, content)
+        y = self._draw_informe_block(c, y, name, position, total_score, nivel, content)
         y = self._draw_descripcion(c, y, content)
         y = self._draw_recomendaciones(c, y, content)
         self._draw_cta(c, y)
@@ -293,7 +294,7 @@ class IEPDFGenerator:
 
     def _draw_logo(self, c):
         """Logo arriba a la derecha en zona del header."""
-        logo_h, logo_w = 22, 65
+        logo_h, logo_w = 26, 80
         logo_x = self.W - self.MR - logo_w
         logo_y = self.H - 28 - logo_h  # 28pt desde top
         try:
@@ -425,6 +426,64 @@ class IEPDFGenerator:
         c.drawString(self.ML, y, "Informe Integrado de Resultados:")
         return y - 4
 
+    def _draw_informe_block(self, c, y, name, position, total_score, nivel, content):
+        """
+        Layout de 2 columnas:
+        - Columna izquierda: badge orgánico (~90pt ancho)
+        - Columna derecha: Nombre, Puesto, Frase, Score
+        """
+        badge_size = 90
+        col_gap    = 12
+        badge_x    = self.ML
+        right_x    = self.ML + badge_size + col_gap
+        right_w    = self.CW - badge_size - col_gap
+
+        badge_top_y = y - 6
+        badge_bot_y = badge_top_y - badge_size
+
+        # Columna derecha: Nombre y Puesto
+        y_right = badge_top_y - 2
+
+        c.setFillColor(C_WHITE)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(right_x, y_right, "Nombre:")
+        c.setFont("Helvetica", 9)
+        c.drawString(right_x + 50, y_right, name)
+
+        y_right -= 13
+
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(right_x, y_right, "Puesto:")
+        c.setFont("Helvetica", 9)
+        c.drawString(right_x + 48, y_right, position)
+
+        y_right -= 8
+
+        # Columna derecha: Frase del nivel
+        color = FRASE_COLOR[nivel]
+        y_right = _draw_para(c, right_x, y_right, content["frase"], right_w,
+                             font="Helvetica-BoldOblique", size=9,
+                             color=color, leading=13, align=TA_LEFT)
+        y_right -= 5
+
+        # Columna derecha: Score con prefijo
+        score_txt = f"Tu puntuaci\u00f3n fue:   <b>{int(total_score)} puntos de un total de 40 puntos</b>"
+        y_right = _draw_para(c, right_x, y_right, score_txt, right_w,
+                             font="Helvetica", size=8.5, color=C_WHITE,
+                             leading=12, align=TA_LEFT)
+
+        # Columna izquierda: Badge
+        badge_cx = badge_x + badge_size / 2
+        badge_cy = badge_bot_y + badge_size / 2
+        self._draw_fallback_badge(c, badge_cx, badge_cy, badge_size / 2 - 4)
+        c.setFillColor(C_WHITE)
+        c.setFont("Helvetica-Bold", 14)
+        c.drawCentredString(badge_cx, badge_cy - 5, nivel)
+
+        final_y = min(badge_bot_y - 8, y_right - 6)
+        return final_y
+
+    # DEPRECATED — replaced by _draw_informe_block()
     def _draw_user_score(self, c, y, name, position, score):
         """Nombre, Puesto y Score."""
         # Nombre
@@ -450,6 +509,7 @@ class IEPDFGenerator:
                    leading=14, align=TA_CENTER)
         return y - 10
 
+    # DEPRECATED — replaced by _draw_informe_block()
     def _draw_badge(self, c, y, nivel):
         """Badge orgánico PNG del nivel (imagen embebida del template)."""
         y -= 4
@@ -503,6 +563,7 @@ class IEPDFGenerator:
             c.drawPath(path, fill=1, stroke=0)
             c.restoreState()
 
+    # DEPRECATED — replaced by _draw_informe_block()
     def _draw_frase(self, c, y, nivel, content):
         """Frase destacada del nivel."""
         y -= 6
@@ -549,7 +610,7 @@ class IEPDFGenerator:
         c.drawString(self.ML, y, content["titulo_rec"])
         y -= 10
 
-        ilus_w = 125
+        ilus_w = 148
         ilus_x = self.W - self.MR - ilus_w
         text_w = ilus_x - self.ML - 6
         rec_start_y = y

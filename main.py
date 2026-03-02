@@ -172,12 +172,7 @@ def generate_ie_pdf(request: IEPDFRequest):
     Scoring: opcion 1->1pt, 2->2pts, 3->4pts, 4->1pt (escala no-lineal)
     """
     try:
-        pdf_buffer: BytesIO = ie_pdf_generator.generate(
-            name=request.user.name,
-            position=request.user.position,
-            total_score=request.results.total_score,
-            nivel=request.results.nivel,
-        )
+        pdf_buffer: BytesIO = ie_pdf_generator.generate_pdf(request.model_dump())
         filename = _build_filename(request.user.name, prefix="diagnostico_ie")
 
         return StreamingResponse(
@@ -204,12 +199,7 @@ def generate_ie_pdf_base64(request: IEPDFRequest):
         }
     """
     try:
-        pdf_buffer: BytesIO = ie_pdf_generator.generate(
-            name=request.user.name,
-            position=request.user.position,
-            total_score=request.results.total_score,
-            nivel=request.results.nivel,
-        )
+        pdf_buffer: BytesIO = ie_pdf_generator.generate_pdf(request.model_dump())
         pdf_bytes = pdf_buffer.read()
         pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
         filename = _build_filename(request.user.name, prefix="diagnostico_ie")

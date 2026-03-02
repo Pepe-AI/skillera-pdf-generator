@@ -9,19 +9,22 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 
 from models.schemas import PDFRequest, PDFResponse
+from models.ie_schemas import IEPDFRequest, IEPDFResponse      # ← NUEVO IE
 from services.pdf_generator import PDFGenerator
+from services.ie_pdf_generator import IEPDFGenerator           # ← NUEVO IE
 from services.pdf_store import PDFStore
 
 
 app = FastAPI(
     title="Skillera PDF Generator",
-    version="1.1.0",
-    description="API para generar reportes PDF de diagnosticos de liderazgo",
+    version="1.2.0",
+    description="API para generar reportes PDF de diagnosticos de liderazgo e inteligencia emocional",
 )
 
 # ── Singleton instances ───────────────────────────────────────────────
 
 pdf_generator = PDFGenerator()
+ie_pdf_generator = IEPDFGenerator()                            # ← NUEVO IE
 
 # TTL configurable via environment variable (default: 30 minutes)
 PDF_TTL_MINUTES = int(os.getenv("PDF_TTL_MINUTES", "30"))
@@ -32,10 +35,10 @@ pdf_store = PDFStore(ttl_minutes=PDF_TTL_MINUTES, max_items=PDF_MAX_ITEMS)
 
 # ── Helper: build filename ────────────────────────────────────────────
 
-def _build_filename(user_name: str) -> str:
+def _build_filename(user_name: str, prefix: str = "diagnostico") -> str:
     """Generate a consistent filename from the user's name."""
     safe_name = user_name.replace(" ", "_")
-    return f"diagnostico_{safe_name}_{date.today().isoformat()}.pdf"
+    return f"{prefix}_{safe_name}_{date.today().isoformat()}.pdf"
 
 
 # ── Helper: build public URL ──────────────────────────────────────────
@@ -75,7 +78,7 @@ def health_check():
 @app.get("/")
 def root():
     """Root endpoint with service info."""
-    return {"message": "Skillera PDF Generator API v1.1.0"}
+    return {"message": "Skillera PDF Generator API v1.2.0"}
 
 
 # ── POST /generate-pdf (binary download) ─────────────────────────────
@@ -155,6 +158,69 @@ def generate_pdf_url(request: PDFRequest, req: Request):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
+
+
+# ── IE: POST /generate-ie-pdf (binary download) ──────────────────────
+
+@app.post("/generate-ie-pdf")
+def generate_ie_pdf(request: IEPDFRequest):
+    """
+    Genera PDF de Diagnostico de Inteligencia Emocional.
+    Retorna archivo binario descargable.
+
+    Niveles validos: Bajo (10-20pts) | Medio (21-30pts) | Alto (31-40pts)
+    Scoring: opcion 1->1pt, 2->2pts, 3->4pts, 4->1pt (escala no-lineal)
+    """
+    try:
+        pdf_buffer: BytesIO = ie_pdf_generator.generate(
+            name=request.user.name,
+            position=request.user.position,
+            total_score=request.results.total_score,
+            nivel=request.results.nivel,
+        )
+        filename = _build_filename(request.user.name, prefix="diagnostico_ie")
+
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"IE PDF generation failed: {str(e)}")
+
+
+# ── IE: POST /generate-ie-pdf-base64 (base64 string) ─────────────────
+
+@app.post("/generate-ie-pdf-base64", response_model=IEPDFResponse)
+def generate_ie_pdf_base64(request: IEPDFRequest):
+    """
+    Genera PDF de Diagnostico de Inteligencia Emocional.
+    Retorna base64 para envio por WhatsApp/Email via n8n.
+
+    Payload:
+        {
+            "user": {"name": "Juan Perez", "position": "Gerente"},
+            "results": {"total_score": 28, "nivel": "Medio"}
+        }
+    """
+    try:
+        pdf_buffer: BytesIO = ie_pdf_generator.generate(
+            name=request.user.name,
+            position=request.user.position,
+            total_score=request.results.total_score,
+            nivel=request.results.nivel,
+        )
+        pdf_bytes = pdf_buffer.read()
+        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+        filename = _build_filename(request.user.name, prefix="diagnostico_ie")
+
+        return IEPDFResponse(
+            success=True,
+            pdf_base64=pdf_b64,
+            filename=filename,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"IE PDF generation failed: {str(e)}")
 
 
 # ── GET /pdfs/{pdf_id} (serve stored PDF) ─────────────────────────────

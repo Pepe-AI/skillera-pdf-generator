@@ -60,3 +60,5 @@ assets/*
 !assets/template.pdf
 !assets/fonts/
 !assets/fonts/*.ttf
+!assets/logo_transparent.png
+!assets/badge_organico.png

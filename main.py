@@ -24,7 +24,7 @@ app = FastAPI(
 # ── Singleton instances ───────────────────────────────────────────────
 
 pdf_generator = PDFGenerator()
-ie_pdf_generator = IEPDFGenerator()                            # ← NUEVO IE
+ie_generator = IEPDFGenerator()                                # IE overlay+merge
 
 # TTL configurable via environment variable (default: 30 minutes)
 PDF_TTL_MINUTES = int(os.getenv("PDF_TTL_MINUTES", "30"))
@@ -172,14 +172,11 @@ def generate_ie_pdf(request: IEPDFRequest):
     Scoring: opcion 1->1pt, 2->2pts, 3->4pts, 4->1pt (escala no-lineal)
     """
     try:
-        pdf_buffer: BytesIO = ie_pdf_generator.generate(
-            name=request.user.name,
-            position=request.user.position,
-            total_score=request.results.total_score,
-            nivel=request.results.nivel,
+        pdf_buffer = ie_generator.generate_pdf(request.model_dump())
+        filename = (
+            f"diagnostico_ie_{request.user.name.replace(' ', '_')}"
+            f"_{date.today().isoformat()}.pdf"
         )
-        filename = _build_filename(request.user.name, prefix="diagnostico_ie")
-
         return StreamingResponse(
             pdf_buffer,
             media_type="application/pdf",
@@ -193,32 +190,15 @@ def generate_ie_pdf(request: IEPDFRequest):
 
 @app.post("/generate-ie-pdf-base64", response_model=IEPDFResponse)
 def generate_ie_pdf_base64(request: IEPDFRequest):
-    """
-    Genera PDF de Diagnostico de Inteligencia Emocional.
-    Retorna base64 para envio por WhatsApp/Email via n8n.
-
-    Payload:
-        {
-            "user": {"name": "Juan Perez", "position": "Gerente"},
-            "results": {"total_score": 28, "nivel": "Medio"}
-        }
-    """
+    """Genera PDF de Diagnóstico IE y retorna base64 para WhatsApp."""
     try:
-        pdf_buffer: BytesIO = ie_pdf_generator.generate(
-            name=request.user.name,
-            position=request.user.position,
-            total_score=request.results.total_score,
-            nivel=request.results.nivel,
+        pdf_buffer = ie_generator.generate_pdf(request.model_dump())
+        pdf_b64 = base64.b64encode(pdf_buffer.read()).decode("utf-8")
+        filename = (
+            f"diagnostico_ie_{request.user.name.replace(' ', '_')}"
+            f"_{date.today().isoformat()}.pdf"
         )
-        pdf_bytes = pdf_buffer.read()
-        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-        filename = _build_filename(request.user.name, prefix="diagnostico_ie")
-
-        return IEPDFResponse(
-            success=True,
-            pdf_base64=pdf_b64,
-            filename=filename,
-        )
+        return IEPDFResponse(success=True, pdf_base64=pdf_b64, filename=filename)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"IE PDF generation failed: {str(e)}")
 

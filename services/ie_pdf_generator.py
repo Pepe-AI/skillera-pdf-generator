@@ -1,361 +1,441 @@
 """
-IE PDF Generator v4 — Template Overlay
-
-Usa PyMuPDF (fitz) para superponer contenido dinámico sobre assets/template_ie.pdf.
-
-El template ya contiene visualmente: header con gradiente, logo Skillera, título,
-párrafo introductorio, sección ¿Qué es IE?, escala de valoración con badges,
-separador, outline del badge de nivel, ilustración con bloques 1/2/3, CTA y footer.
-
-Solo se generan dinámicamente: nombre, puesto, score, relleno del badge de nivel,
-texto del nivel, frase, descripción y textos de las 3 recomendaciones.
-
-Dimensiones reales del template: 1440.0 × 2557.5 pt
-Coordenadas extraídas directamente del template (no escaladas).
-
-Layout del template (sección Informe, y > 756):
-  - LEFT COLUMN  (x: 0–560):  Badge orgánico, Nombre, Puesto, Badge nivel
-  - RIGHT COLUMN (x: 560+):   Score, Frase, Descripción
-  - FULL WIDTH   (y > 1430):  Rec circles+texto (x<790), Ilustración (x>798)
-
-Coordenadas: (x, y) desde TOP-LEFT — convención PyMuPDF con Y creciendo hacia abajo.
+IE PDF Generator — Diagnóstico de Inteligencia Emocional
+Estrategia: ReportLab overlay (contenido dinámico) + pypdf merge sobre template vectorial.
+Template: assets/template_ie.pdf  (1440 x 2557.5 pt, PDF vectorial)
 """
 
 import os
 from io import BytesIO
 
-import fitz  # PyMuPDF
+import pypdf
+from reportlab.pdfgen import canvas
+from reportlab.lib.colors import HexColor
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
+from reportlab.platypus import Paragraph
+from reportlab.pdfbase.pdfmetrics import stringWidth
+
+# ── Página ───────────────────────────────────────────────────────────────────
+PAGE_W = 1440.0
+PAGE_H = 2557.5
 
 
-# ── Unicode → Latin-1 replacement map ─────────────────────────────────────────
-# Base14 fonts (helv, hebo, hebi) only support Latin-1.
-# Characters outside Latin-1 render as "?" — we map them to Latin-1 equivalents.
-_UNICODE_MAP = {
-    "\u201c": "\u00ab",   # " → «
-    "\u201d": "\u00bb",   # " → »
-    "\u2022": "\u00b7",   # • → ·  (middle dot, best Latin-1 bullet substitute)
-}
-
-def _sanitize(text: str) -> str:
-    """Replace Unicode chars unsupported by Base14 fonts with Latin-1 equivalents."""
-    for src, dst in _UNICODE_MAP.items():
-        text = text.replace(src, dst)
-    return text
+def _rl(fitz_y: float) -> float:
+    """Convierte Y de sistema fitz (top-left) a ReportLab (bottom-left)."""
+    return PAGE_H - fitz_y
 
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-ASSETS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets"
-)
-TEMPLATE_PATH = os.path.join(ASSETS_DIR, "template_ie.pdf")
+# ── Colores ──────────────────────────────────────────────────────────────────
+C_WHITE = HexColor("#FFFFFF")
+C_TEAL  = HexColor("#3CCBB2")
 
-
-# ── Colores (RGB tuplas 0.0–1.0 para PyMuPDF) ─────────────────────────────────
-C_WHITE    = (1.0,   1.0,   1.0)
-C_LAVANDA2 = (0.702, 0.592, 1.0)    # #B397FF — frase Bajo/Medio
-C_GRAY     = (0.627, 0.682, 0.753)  # #A0AEC0
-
-NIVEL_FILL_COLOR = {
-    "Alto":  (0.624, 0.478, 0.918),  # #9F7AEA — púrpura
-    "Medio": (0.400, 0.494, 0.918),  # #667EEA — azul
-    "Bajo":  (0.627, 0.682, 0.753),  # #A0AEC0 — gris
-}
-
-FRASE_COLOR = {
-    "Alto":  C_WHITE,
-    "Medio": C_LAVANDA2,
-    "Bajo":  C_LAVANDA2,
-}
-
-
-# ── Coordenadas directas del template (1440 × 2557.5 pt) ─────────────────────
-# Extraídas con page.get_text('dict'), get_images(), get_drawings().
-#
-# Template text elements de referencia:
-#   "Nombre:"   (46.6, 857.1) – (193.5, 903.2)  font=33pt  white
-#   "Puesto:"   (46.6, 902.1) – (171.1, 948.2)  font=33pt  white
-#   "X puntos…" (637.7, 975.4) – (945.8, 1014.6) font=28pt white (placeholder)
-#   Badge img   (-94.8, 839.5) – (559.6, 1493.9) 654×654
-#   Rec circle1 (71.6, 1432.9) – (118.2, 1488.2) fill=lavanda
-#   Rec circle2 (72.3, 1657.6) – (118.2, 1711.9) fill=lavanda
-#   Rec circle3 (71.6, 1828.8) – (117.4, 1885.6) fill=lavanda
-#   Illustration (798.3, 1432.9) – (1431.3, 2065.9)
-
-# Nombre: justo después del label "Nombre:" que termina en x≈194
-# baseline alineada con label (bbox top=857, font=33pt → baseline≈890)
-NOMBRE_X  = 200
-NOMBRE_Y  = 890
-
-# Puesto: justo después del label "Puesto:" que termina en x≈171
-# baseline alineada (bbox top=902, font=33pt → baseline≈935)
-PUESTO_X  = 178
-PUESTO_Y  = 935
-
-# Score: centrado sobre el placeholder "X puntos de 40 puntos"
-# Template text center x = (638+946)/2 ≈ 792,  baseline ≈ 1003
-SCORE_CENTER_X = 792
-SCORE_Y        = 1003
-
-# Rect para redactar el placeholder "X puntos de 40 puntos" del template
-SCORE_PLACEHOLDER_RECT = fitz.Rect(630, 970, 955, 1020)
-
-# Badge fill: rounded rect dentro del badge orgánico
-# Badge orgánico: (-95, 840) – (560, 1494).
-# El fill va en la zona central-inferior del orgánico.
-BADGE_X1 = 50
-BADGE_Y1 = 1100
-BADGE_X2 = 470
-BADGE_Y2 = 1380
-
-BADGE_CENTER_X = 260
-BADGE_CENTER_Y = 1260
-
-BADGE_RADIUS = 0.15  # fracción del lado menor (PyMuPDF: 0.0–1.0)
-
-# Frase: columna derecha, debajo del score
-FRASE_RECT = fitz.Rect(
-    580, 1040,    # top-left
-    1380, 1200,   # bottom-right
-)
-
-# Descripción: columna derecha, debajo de frase
-DESC_RECT = fitz.Rect(
-    580, 1200,
-    1380, 1420,
-)
-
-# Recomendaciones: a la derecha de los círculos, izquierda de la ilustración
-# Circle 1: (72, 1433)–(118, 1488)  number "1" at y≈1445–1475
-# Circle 2: (72, 1658)–(118, 1712)  number "2" at y≈1669–1699
-# Circle 3: (72, 1829)–(118, 1886)  number "3" at y≈1841–1873
-REC_X1 = 135
-REC_X2 = 780    # illustration starts at x=798
-
-REC_ZONES = [
-    fitz.Rect(REC_X1, 1433, REC_X2, 1640),
-    fitz.Rect(REC_X1, 1658, REC_X2, 1815),
-    fitz.Rect(REC_X1, 1829, REC_X2, 2060),
-]
-
-# ── Font sizes ────────────────────────────────────────────────────────────────
-FS_NAME      = 24     # nombre y puesto (label es 33pt; valor un poco menor)
-FS_SCORE     = 28     # igual que placeholder del template
-FS_BADGE     = 40     # texto del nivel dentro del badge
-FS_FRASE     = 20     # frase motivacional
-FS_DESC      = 17     # descripción
-FS_REC_TITLE = 16     # título de recomendación (bold)
-FS_REC_BODY  = 15     # cuerpo de recomendación
-
-
-# ── Textos estáticos por nivel ─────────────────────────────────────────────────
+# ── Contenido por nivel ──────────────────────────────────────────────────────
 IE_CONTENT = {
-    "Alto": {
-        "frase": (
-            "\u201cGestionas tus emociones con conciencia y "
-            "eliges c\u00f3mo responder\u201d"
-        ),
-        "descripcion": (
-            "Probablemente:\n"
-            "\u2022 Reconoces lo que sientes y c\u00f3mo influye en tus decisiones.\n"
-            "\u2022 Manejas conversaciones dif\u00edciles con equilibrio.\n"
-            "\u2022 Utilizas el feedback como herramienta de crecimiento.\n"
-            "\u2022 Influyes positivamente en el clima emocional de tu entorno."
-        ),
-        "recomendaciones": [
-            (
-                "Entrena la regulaci\u00f3n en alta intensidad\n"
-                "Observa qu\u00e9 cambia bajo presi\u00f3n real (conflicto, jerarqu\u00eda). "
-                "Ah\u00ed se mide el dominio."
+    "Bajo": {
+        "frase": '"Tus emociones suelen gestionarse de forma reactiva o evitativa".',
+        "descripcion": {
+            "parrafo1": (
+                "Hay poca conciencia emocional y alto impacto en decisiones y relaciones. "
+                "Tiendes a reaccionar de forma autom\u00e1tica frente a tus emociones, especialmente "
+                "bajo presi\u00f3n o conflicto. Puede haber dificultad para identificar con claridad "
+                "lo que sientes o para regularlo antes de actuar."
             ),
-            (
-                "Desarrolla IE interpersonal\n"
-                "Ayuda a otros a regularse. Valida emociones antes de "
-                "proponer soluciones."
+            "bullets_header": "Es posible que:",
+            "bullets": [
+                "Reacciones impulsivamente o evites conversaciones inc\u00f3modas.",
+                "Te cueste separar el hecho de la emoci\u00f3n.",
+                "Las emociones influyan en tus decisiones sin que lo notes plenamente.",
+                "Haya impacto frecuente en relaciones laborales o personales.",
+            ],
+            "parrafo2": (
+                "Este nivel no habla de incapacidad, sino de bajo entrenamiento emocional "
+                "consciente. Muchas personas operan desde este punto sin haber desarrollado "
+                "herramientas formales de regulaci\u00f3n."
             ),
-            (
-                "Reflexiona sobre patrones invisibles\n"
-                "Con alta IE a\u00fan existen puntos ciegos. Preg\u00fantate: "
-                "\u00bfQu\u00e9 cr\u00edtica me incomoda? \u00bfD\u00f3nde pierdo neutralidad?"
-            ),
+        },
+        "recs": [
+            {
+                "titulo": "Entrena la identificaci\u00f3n emocional diaria",
+                "subtitulo": "Al final del d\u00eda preg\u00fantate:",
+                "bullets": ["\u00bfQu\u00e9 sent\u00ed hoy?", "\u00bfEn qu\u00e9 momento fue m\u00e1s intenso?", "\u00bfC\u00f3mo reaccion\u00e9?"],
+                "bold_final": "Nombrar la emoci\u00f3n reduce su intensidad.",
+            },
+            {
+                "titulo": "Introduce la pausa de 90 segundos",
+                "cuerpo": (
+                    "Antes de responder en situaciones tensas, respira profundo y retrasa "
+                    "tu reacci\u00f3n al menos 90 segundos. Esto activa la regulaci\u00f3n en lugar del impulso."
+                ),
+            },
+            {
+                "titulo": "Separa hecho de interpretaci\u00f3n",
+                "subtitulo": "Escribe una situaci\u00f3n reciente y div\u00eddela en:",
+                "bullets": ["Hecho objetivo", "Lo que pens\u00e9", "Lo que sent\u00ed", "Lo que hice"],
+                "bold_final": "Esto desarrolla conciencia y rompe la reacci\u00f3n autom\u00e1tica.",
+            },
         ],
     },
     "Medio": {
-        "frase": (
-            "\u201cReconoces lo que sientes, pero bajo presi\u00f3n "
-            "vuelves a patrones autom\u00e1ticos\u201d"
-        ),
-        "descripcion": (
-            "Tienes una base s\u00f3lida, pero la regulaci\u00f3n a\u00fan no es consistente.\n"
-            "Es probable que escuches feedback pero te afecte m\u00e1s de lo que\n"
-            "reconoces, o que bajo estr\u00e9s las buenas intenciones se debiliten."
-        ),
-        "recomendaciones": [
-            (
-                "Practica la regulaci\u00f3n antes de conversar\n"
-                "Antes de una conversaci\u00f3n dif\u00edcil: \u00bfQu\u00e9 quiero lograr? "
-                "\u00bfDesde qu\u00e9 emoci\u00f3n hablo?"
+        "frase": '"Reconoces lo que sientes, pero bajo presi\u00f3n vuelves a patrones autom\u00e1ticos".',
+        "descripcion": {
+            "parrafo1": (
+                "Tienes una base s\u00f3lida para desarrollar mayor regulaci\u00f3n emocional. "
+                "Hay conciencia, pero la regulaci\u00f3n todav\u00eda no es consistente."
             ),
-            (
-                "Pide feedback sobre tu impacto emocional\n"
-                "Pregunta a alguien de confianza c\u00f3mo te percibe bajo presi\u00f3n."
+            "bullets_header": "Es probable que:",
+            "bullets": [
+                "Escuches feedback, pero te afecte m\u00e1s de lo que reconoces.",
+                "Identifiques emociones, pero no siempre sepas gestionarlas.",
+                "Tengas buenas intenciones relacionales, aunque bajo estr\u00e9s se debiliten.",
+            ],
+            "parrafo2": (
+                "Este nivel es una base s\u00f3lida. La diferencia entre nivel medio y alto suele "
+                "estar en la consistencia, especialmente en momentos de tensi\u00f3n."
             ),
-            (
-                "Desarrolla vocabulario emocional m\u00e1s amplio\n"
-                "Diferencia: frustrado, decepcionado, ansioso, inseguro. "
-                "Mayor precisi\u00f3n = mejor regulaci\u00f3n."
-            ),
+        },
+        "recs": [
+            {
+                "titulo": "Practica la regulaci\u00f3n antes de conversar",
+                "subtitulo": "Antes de una conversaci\u00f3n dif\u00edcil, preg\u00fantate:",
+                "bullets": ["\u00bfQu\u00e9 quiero lograr?", "\u00bfDesde qu\u00e9 emoci\u00f3n estoy hablando?"],
+                "bold_final": "Esto aumenta la intenci\u00f3n consciente.",
+            },
+            {
+                "titulo": "Pide feedback sobre tu impacto emocional",
+                "subtitulo": "Pregunta a alguien de confianza:",
+                "bullets": ['"Cuando estoy bajo presi\u00f3n, \u00bfc\u00f3mo me percibes?"'],
+                "bold_final": "La autoconciencia se fortalece con retroalimentaci\u00f3n externa.",
+            },
+            {
+                "titulo": "Desarrolla vocabulario emocional m\u00e1s amplio",
+                "cuerpo": (
+                    'No es solo "molesto" o "bien", practica diferenciar: frustrado, '
+                    "decepcionado, ansioso, inseguro, exigente, etc."
+                ),
+                "bold_final": "Mayor precisi\u00f3n = mejor regulaci\u00f3n.",
+            },
         ],
     },
-    "Bajo": {
-        "frase": (
-            "\u201cTus emociones suelen gestionarse de forma "
-            "reactiva o evitativa\u201d"
-        ),
-        "descripcion": (
-            "Hay poca conciencia emocional y alto impacto en tus decisiones.\n"
-            "Es posible que reacciones impulsivamente o evites conversaciones\n"
-            "inc\u00f3modas. Esto no habla de incapacidad, sino de bajo\n"
-            "entrenamiento emocional consciente."
-        ),
-        "recomendaciones": [
-            (
-                "Entrena la identificaci\u00f3n emocional diaria\n"
-                "Al final del d\u00eda: \u00bfQu\u00e9 sent\u00ed? \u00bfCu\u00e1ndo fue m\u00e1s intenso? "
-                "\u00bfC\u00f3mo reaccion\u00e9? Nombrar la emoci\u00f3n reduce su intensidad."
+    "Alto": {
+        "frase": '"Gestionas tus emociones con conciencia y eliges c\u00f3mo responder".',
+        "descripcion": {
+            "parrafo1": "Probablemente:",
+            "bullets_header": None,
+            "bullets": [
+                "Reconoces lo que sientes y c\u00f3mo influye en tus decisiones.",
+                "Manejas conversaciones dif\u00edciles con equilibrio.",
+                "Utilizas el feedback como herramienta de crecimiento.",
+                "Influyes positivamente en el clima emocional de tu entorno.",
+            ],
+            "parrafo2": (
+                "El reto en este nivel no es aprender lo b\u00e1sico, sino sostener la habilidad "
+                "bajo alta carga emocional y liderazgo de otros."
             ),
-            (
-                "Introduce la pausa de 90 segundos\n"
-                "Bajo tensi\u00f3n, respira profundo y retrasa tu reacci\u00f3n. "
-                "Activa regulaci\u00f3n en lugar del impulso."
-            ),
-            (
-                "Separa hecho de interpretaci\u00f3n\n"
-                "Escribe una situaci\u00f3n y divide: Hecho / Lo que pens\u00e9 / "
-                "Lo que sent\u00ed / Lo que hice."
-            ),
+        },
+        "recs": [
+            {
+                "titulo": "Entrena la regulaci\u00f3n en situaciones de alta intensidad",
+                "cuerpo": "Observa qu\u00e9 cambia cuando hay presi\u00f3n real (tiempo, conflicto, jerarqu\u00eda).",
+                "bold_final": "Ah\u00ed se mide el dominio.",
+            },
+            {
+                "titulo": "Desarrolla inteligencia emocional interpersonal",
+                "cuerpo": "No solo gestiones tus emociones; ayuda a otros a regularse.",
+                "bold_final": "Practica validar emociones antes de proponer soluciones.",
+            },
+            {
+                "titulo": "Reflexiona sobre tus patrones invisibles",
+                "subtitulo": (
+                    "Incluso con alta inteligencia emocional, existen sesgos o puntos ciegos. "
+                    "Preg\u00fantate:"
+                ),
+                "bullets": [
+                    "\u00bfQu\u00e9 tipo de cr\u00edtica a\u00fan me incomoda?",
+                    "\u00bfEn qu\u00e9 situaciones pierdo m\u00e1s neutralidad?",
+                ],
+            },
         ],
     },
 }
 
 
-# ── Clase principal ────────────────────────────────────────────────────────────
 class IEPDFGenerator:
-    """
-    Genera PDFs de IE superponiendo contenido dinámico sobre template_ie.pdf.
-    Usa únicamente PyMuPDF (fitz). Sin ReportLab.
-    """
+    """Genera PDFs del Diagnóstico IE con overlay sobre template vectorial."""
 
-    def generate(
-        self,
-        name: str,
-        position: str,
-        total_score: float,
-        nivel: str,
-    ) -> BytesIO:
-        content = IE_CONTENT[nivel]
+    TEMPLATE_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "assets", "template_ie.pdf",
+    )
 
-        doc = fitz.open(TEMPLATE_PATH)
-        page = doc[0]
+    def generate_pdf(self, data: dict) -> BytesIO:
+        """
+        Genera el PDF completo.
+        data = {
+            "user":    {"name": str, "position": str},
+            "results": {"total_score": float, "nivel": str}  # nivel: Bajo|Medio|Alto
+        }
+        """
+        nivel    = data["results"]["nivel"]
+        score    = int(data["results"]["total_score"])
+        name     = data["user"]["name"]
+        position = data["user"]["position"]
+        content  = IE_CONTENT[nivel]
 
-        # 1. Redactar el placeholder "X puntos de 40 puntos" del template
-        self._redact_score_placeholder(page)
+        # 1. Crear overlay transparente con ReportLab
+        overlay_buf = BytesIO()
+        c = canvas.Canvas(overlay_buf, pagesize=(PAGE_W, PAGE_H))
 
-        # 2. Dibujar contenido dinámico (sanitizar Unicode → Latin-1)
-        self._draw_informe_block(page, name, position, total_score, nivel)
-        self._draw_frase(page, nivel, _sanitize(content["frase"]))
-        self._draw_descripcion(page, _sanitize(content["descripcion"]))
-        self._draw_recomendaciones(page, [_sanitize(r) for r in content["recomendaciones"]])
+        self._draw_nombre(c, name)
+        self._draw_puesto(c, position)
+        self._draw_score(c, score)
+        self._draw_nivel_badge(c, nivel)
+        self._draw_frase(c, content["frase"])
+        self._draw_descripcion(c, content["descripcion"])
+        self._draw_rec_header(c)
+        self._draw_recomendaciones(c, content["recs"])
+        self._draw_cierre(c)
 
-        buffer = BytesIO()
-        doc.save(buffer)
-        doc.close()
-        buffer.seek(0)
-        return buffer
+        c.save()
+        overlay_buf.seek(0)
 
-    # ── Redacción del placeholder ─────────────────────────────────────────
-    @staticmethod
-    def _redact_score_placeholder(page):
-        """Elimina el texto placeholder 'X puntos de 40 puntos' del template."""
-        ann = page.add_redact_annot(SCORE_PLACEHOLDER_RECT)
-        ann.set_colors(fill=None)   # sin relleno → mantiene imagen de fondo
-        ann.update()
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        # 2. Merge overlay sobre el template
+        template_reader = pypdf.PdfReader(self.TEMPLATE_PATH)
+        overlay_reader  = pypdf.PdfReader(overlay_buf)
 
-    # ── Bloque Informe ────────────────────────────────────────────────────
-    def _draw_informe_block(
-        self, page, name, position, total_score, nivel
-    ):
-        # Nombre (después de "Nombre:" label)
-        page.insert_text(
-            (NOMBRE_X, NOMBRE_Y), name,
-            fontname="helv", fontsize=FS_NAME, color=C_WHITE,
-        )
-        # Puesto (después de "Puesto:" label)
-        page.insert_text(
-            (PUESTO_X, PUESTO_Y), position,
-            fontname="helv", fontsize=FS_NAME, color=C_WHITE,
-        )
-        # Score centrado sobre el área del placeholder redactado
-        score_text = f"{int(total_score)} puntos de 40 puntos"
-        text_len = fitz.get_text_length(
-            score_text, fontname="helv", fontsize=FS_SCORE
-        )
-        page.insert_text(
-            (SCORE_CENTER_X - text_len / 2, SCORE_Y), score_text,
-            fontname="helv", fontsize=FS_SCORE, color=C_WHITE,
-        )
-        # Badge relleno (rounded rectangle)
-        badge_rect = fitz.Rect(BADGE_X1, BADGE_Y1, BADGE_X2, BADGE_Y2)
-        page.draw_rect(
-            badge_rect,
-            color=None,
-            fill=NIVEL_FILL_COLOR[nivel],
-            radius=BADGE_RADIUS,
-        )
-        # Texto del nivel centrado en el badge
-        nivel_len = fitz.get_text_length(
-            nivel, fontname="hebo", fontsize=FS_BADGE
-        )
-        page.insert_text(
-            (BADGE_CENTER_X - nivel_len / 2, BADGE_CENTER_Y), nivel,
-            fontname="hebo", fontsize=FS_BADGE, color=C_WHITE,
-        )
+        page = template_reader.pages[0]
+        page.merge_page(overlay_reader.pages[0])
 
-    # ── Frase motivacional ────────────────────────────────────────────────
-    def _draw_frase(self, page, nivel, frase):
-        page.insert_textbox(
-            FRASE_RECT, frase,
-            fontname="hebi", fontsize=FS_FRASE,
-            color=FRASE_COLOR[nivel], align=fitz.TEXT_ALIGN_LEFT,
-        )
+        writer = pypdf.PdfWriter()
+        writer.add_page(page)
 
-    # ── Descripción ───────────────────────────────────────────────────────
-    def _draw_descripcion(self, page, texto):
-        page.insert_textbox(
-            DESC_RECT, texto,
-            fontname="helv", fontsize=FS_DESC,
-            color=C_WHITE, align=fitz.TEXT_ALIGN_LEFT,
-        )
+        output = BytesIO()
+        writer.write(output)
+        output.seek(0)
+        return output
 
-    # ── Recomendaciones ───────────────────────────────────────────────────
-    def _draw_recomendaciones(self, page, recomendaciones):
-        for rec_text, zone in zip(recomendaciones, REC_ZONES):
-            titulo, *resto = rec_text.split("\n", 1)
-            cuerpo = resto[0] if resto else ""
+    # ── helpers privados ─────────────────────────────────────────────────────
 
-            # Título bold — baseline a 20pt del top de la zona
-            page.insert_text(
-                (zone.x0, zone.y0 + 20), titulo,
-                fontname="hebo", fontsize=FS_REC_TITLE, color=C_WHITE,
+    def _autofit_size(self, text: str, font: str, size_start: int,
+                      size_min: int, max_w: float) -> int:
+        """Reduce font size hasta que el texto quepa en max_w."""
+        size = size_start
+        while size > size_min and stringWidth(text, font, size) > max_w:
+            size -= 1
+        return size
+
+    def _draw_nombre(self, c: canvas.Canvas, name: str):
+        """Valor del nombre a la derecha del label 'Nombre:' del template."""
+        # Label 'Nombre:' termina en x=193, baseline rl=1654
+        max_w = 1390 - 201
+        size  = self._autofit_size(name.upper(), "Helvetica-Bold", 33, 20, max_w)
+        c.setFont("Helvetica-Bold", size)
+        c.setFillColor(C_WHITE)
+        c.drawString(201, 1654, name.upper())
+
+    def _draw_puesto(self, c: canvas.Canvas, position: str):
+        """Valor del puesto a la derecha del label 'Puesto:' del template."""
+        # Label 'Puesto:' termina en x=171, baseline rl=1609
+        max_w = 1390 - 179
+        size  = self._autofit_size(position, "Helvetica", 33, 20, max_w)
+        c.setFont("Helvetica", size)
+        c.setFillColor(C_WHITE)
+        c.drawString(179, 1609, position)
+
+    def _draw_score(self, c: canvas.Canvas, score: int):
+        """Reemplaza el placeholder 'X puntos de 40 puntos' con el score real."""
+        # Tapar el placeholder con un rect del color de fondo
+        # Placeholder en y0=975, y1=1015 fitz → rl: 1543 a 1583
+        c.setFillColor(HexColor("#0D0D1A"))
+        c.rect(350, _rl(1020), 1050, 55, fill=1, stroke=0)
+
+        # Dibujar el texto real
+        text = f"Tu puntuaci\u00f3n fue:   {score} puntos de un total de 40 puntos"
+        max_w = 1390 - 350
+        size  = self._autofit_size(text, "Helvetica", 28, 18, max_w)
+        c.setFont("Helvetica", size)
+        c.setFillColor(C_WHITE)
+        # Centrado horizontalmente igual que el placeholder original (center_x=792)
+        text_w = stringWidth(text, "Helvetica", size)
+        x = 792 - text_w / 2
+        c.drawString(x, _rl(1010), text)
+
+    def _draw_nivel_badge(self, c: canvas.Canvas, nivel: str):
+        """Escribe el nivel centrado dentro del badge hexagonal vacío."""
+        # Badge fitz: (74,1048)→(350,1450), center fitz=(212,1249), center rl=(212,1308)
+        cx_rl = 212
+        cy_rl = _rl(1249)
+        size  = self._autofit_size(nivel, "Helvetica-Bold", 60, 36, 240)
+        c.setFont("Helvetica-Bold", size)
+        c.setFillColor(C_WHITE)
+        c.drawCentredString(cx_rl, cy_rl - size * 0.35, nivel)
+
+    def _draw_frase(self, c: canvas.Canvas, frase: str):
+        """Frase del nivel en color teal, zona: fitz (350,960)→(1390,1010)."""
+        x0      = 350
+        zone_w  = 1390 - 350   # 1040 pt
+        zone_h  = 1010 - 960   # 50 pt
+
+        for fs in range(28, 14, -1):
+            style = ParagraphStyle(
+                "fr", fontName="Helvetica-BoldOblique", fontSize=fs,
+                textColor=C_TEAL, leading=int(fs * 1.3), alignment=TA_LEFT,
             )
-            # Cuerpo regular — debajo del título
-            if cuerpo:
-                body_rect = fitz.Rect(
-                    zone.x0, zone.y0 + 30,
-                    zone.x1, zone.y1,
-                )
-                page.insert_textbox(
-                    body_rect, cuerpo,
-                    fontname="helv", fontsize=FS_REC_BODY,
-                    color=C_WHITE, align=fitz.TEXT_ALIGN_LEFT,
-                )
+            p = Paragraph(frase, style)
+            _, ph = p.wrap(zone_w, 9999)
+            if ph <= zone_h or fs == 15:
+                p.drawOn(c, x0, _rl(960) - ph)
+                break
+
+    def _draw_descripcion(self, c: canvas.Canvas, desc: dict):
+        """
+        Bloque de descripción.
+        Zona fitz: (42,1080)→(1402,1440)  — 1360pt wide, 360pt tall
+        El badge ocupa x=74-350 en y=1048-1450, texto a la derecha en x=370.
+        """
+        x0     = 370
+        zone_w = 1402 - 370    # 1032 pt
+        zone_h = 1440 - 1080   # 360 pt
+
+        items = self._desc_to_items(desc)
+        self._draw_block(c, items, x0=x0, y0_fitz=1080,
+                         zone_w=zone_w, zone_h=zone_h,
+                         fs_start=22, fs_min=16)
+
+    def _draw_rec_header(self, c: canvas.Canvas):
+        """Header de recomendaciones: fitz y=1455-1510."""
+        text = "Recomendaciones para potenciar tu desarrollo:"
+        max_w = 760 - 42
+        size  = self._autofit_size(text, "Helvetica-Bold", 26, 18, max_w)
+        c.setFont("Helvetica-Bold", size)
+        c.setFillColor(C_WHITE)
+        c.drawString(42, _rl(1455 + size * 0.8), text)
+
+    def _draw_recomendaciones(self, c: canvas.Canvas, recs: list):
+        """Dibuja el texto de las 3 recomendaciones junto a sus círculos."""
+        zones = [
+            (130, 1433, 760, 1648),   # Rec 1
+            (130, 1658, 760, 1819),   # Rec 2
+            (130, 1829, 760, 2075),   # Rec 3
+        ]
+        for rec, (x0, y0, x1, y1) in zip(recs, zones):
+            items  = self._rec_to_items(rec)
+            zone_w = x1 - x0
+            zone_h = y1 - y0
+            self._draw_block(c, items, x0=x0, y0_fitz=y0,
+                             zone_w=zone_w, zone_h=zone_h,
+                             fs_start=22, fs_min=16, title_bold=True)
+
+    def _draw_cierre(self, c: canvas.Canvas):
+        """2 líneas de cierre centradas. Zona fitz: y=2075-2130."""
+        lines = [
+            ("Helvetica",             20, "Este resultado no te define; solo refleja c\u00f3mo gestionas hoy tus emociones."),
+            ("Helvetica-BoldOblique", 20, '"La inteligencia emocional no es un rasgo fijo, es una habilidad entrenable".'),
+        ]
+        cx = PAGE_W / 2
+        baselines_fitz = [2095, 2118]
+
+        for (font, size_start, text), y_fitz in zip(lines, baselines_fitz):
+            size = self._autofit_size(text, font, size_start, 14, 1360)
+            c.setFont(font, size)
+            c.setFillColor(C_WHITE)
+            c.drawCentredString(cx, _rl(y_fitz), text)
+
+    # ── conversores de datos a items ────────────────────────────────────────
+
+    def _desc_to_items(self, desc: dict) -> list:
+        items = [{"type": "para", "text": desc["parrafo1"]}]
+        if desc.get("bullets_header"):
+            items.append({"type": "para", "text": desc["bullets_header"]})
+        for b in desc.get("bullets", []):
+            items.append({"type": "bullet", "text": b})
+        items.append({"type": "para", "text": desc["parrafo2"]})
+        return items
+
+    def _rec_to_items(self, rec: dict) -> list:
+        items = [{"type": "title", "text": rec["titulo"]}]
+        if rec.get("subtitulo"):
+            items.append({"type": "para", "text": rec["subtitulo"]})
+        if rec.get("cuerpo"):
+            items.append({"type": "para", "text": rec["cuerpo"]})
+        for b in rec.get("bullets", []):
+            items.append({"type": "bullet", "text": b})
+        if rec.get("bold_final"):
+            items.append({"type": "bold", "text": rec["bold_final"]})
+        return items
+
+    # ── motor de renderizado de bloques con autofit ─────────────────────────
+
+    def _draw_block(
+        self,
+        c: canvas.Canvas,
+        items: list,
+        x0: float,
+        y0_fitz: float,
+        zone_w: float,
+        zone_h: float,
+        fs_start: int = 22,
+        fs_min:   int = 16,
+        bullet_indent: float = 28,
+        title_bold: bool = False,
+    ):
+        """
+        Dibuja una lista de items en una zona dada, reduciendo font size si no cabe.
+
+        items: lista de dicts {type: 'title'|'para'|'bullet'|'bold', text: str}
+        Coordenadas en fitz (y0_fitz = top de la zona). Convierte a RL internamente.
+        """
+        for fs in range(fs_start, fs_min - 1, -1):
+            leading    = round(fs * 1.35)
+            title_size = min(fs + 3, 28) if title_bold else fs
+            title_lead = round(title_size * 1.3)
+            space_after = max(2, fs // 5)
+
+            paragraphs = []
+            for item in items:
+                t   = item["type"]
+                txt = item["text"]
+
+                if t == "title":
+                    style = ParagraphStyle(
+                        "tt", fontName="Helvetica-Bold", fontSize=title_size,
+                        textColor=C_WHITE, leading=title_lead,
+                        spaceAfter=space_after, alignment=TA_LEFT,
+                    )
+                    paragraphs.append(Paragraph(txt, style))
+
+                elif t == "para":
+                    style = ParagraphStyle(
+                        "pp", fontName="Helvetica", fontSize=fs,
+                        textColor=C_WHITE, leading=leading,
+                        spaceAfter=space_after, alignment=TA_JUSTIFY,
+                    )
+                    paragraphs.append(Paragraph(txt, style))
+
+                elif t == "bullet":
+                    style = ParagraphStyle(
+                        "bb", fontName="Helvetica", fontSize=fs,
+                        textColor=C_WHITE, leading=leading,
+                        leftIndent=bullet_indent, spaceAfter=space_after,
+                        alignment=TA_LEFT,
+                    )
+                    paragraphs.append(Paragraph(f"\u2022 {txt}", style))
+
+                elif t == "bold":
+                    style = ParagraphStyle(
+                        "bld", fontName="Helvetica-Bold", fontSize=fs,
+                        textColor=C_WHITE, leading=leading,
+                        spaceAfter=space_after, alignment=TA_LEFT,
+                    )
+                    paragraphs.append(Paragraph(txt, style))
+
+            # Medir altura total
+            total_h = sum(p.wrap(zone_w, 9999)[1] for p in paragraphs)
+
+            if total_h <= zone_h or fs == fs_min:
+                # Renderizar desde el top de la zona hacia abajo
+                y_rl = _rl(y0_fitz)
+                for p in paragraphs:
+                    _, ph = p.wrap(zone_w, 9999)
+                    y_rl -= ph
+                    p.drawOn(c, x0, y_rl)
+                return

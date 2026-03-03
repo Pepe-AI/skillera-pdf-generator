@@ -64,3 +64,6 @@ assets/*
 !assets/image_bloques.jpeg
 !assets/badge_organico.png
 !assets/template_ie.pdf
+!assets/Diagnostico_IE_Alto_Skillera.pdf
+!assets/Diagnostico_IE_Medio_Skillera.pdf
+!assets/Diagnostico_IE_Bajo_Skillera.pdf

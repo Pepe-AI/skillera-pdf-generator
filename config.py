@@ -50,6 +50,11 @@ class Config:
     FONT_BOLD_ITALIC = os.path.join(FONTS_DIR, "Montserrat-BoldItalic.ttf")
     FONT_LIGHT = os.path.join(FONTS_DIR, "Montserrat-Light.ttf")
 
+    # Gotham fonts — used for IE PDF overlay
+    GOTHAM_BOLD = os.path.join(FONTS_DIR, "Gotham-Bold.ttf")
+    GOTHAM_BOOK = os.path.join(FONTS_DIR, "Gotham-Book.ttf")
+    GOTHAM_LIGHT = os.path.join(FONTS_DIR, "Gotham-Light.ttf")
+
     # Legacy names (kept for reference)
     PDF_FONT = "Helvetica"
     PDF_FONT_BOLD = "Helvetica-Bold"

@@ -3,11 +3,15 @@ IE PDF generator — PyMuPDF overlay approach.
 
 Opens the correct reference PDF (one per nivel: Bajo/Medio/Alto) and writes
 the dynamic fields (name, position, score) directly onto the page using
-PyMuPDF's TextWriter.  TextWriter appends to the page content stream, so
-the new text renders ON TOP of the existing design — no merge issues.
+PyMuPDF's page.insert_text().
+
+NOTE: TextWriter.write_text() was tried first but produces content streams
+that are invisible on these Canva-exported PDFs (text is extractable but
+not rendered visually).  page.insert_text(fontfile=...) uses a different
+font-registration path that renders correctly on top of the existing design.
 
 Reference PDFs: assets/Diagnostico_IE_{Bajo|Medio|Alto}_Skillera.pdf
-Dimensions: 1440 x 2557.5 pt (vectorial, Poppins-Bold/Regular fonts embedded)
+Dimensions: 1440 x 2557.5 pt (vectorial, Poppins fonts embedded)
 
 Field coordinates (baseline, in pt, measured with fitz.get_text("dict")):
 
@@ -47,14 +51,19 @@ _TEMPLATE_FILES = {
     "Alto":  "Diagnostico_IE_Alto_Skillera.pdf",
 }
 
-# Text colors
+# Text color: white
 _WHITE = (1.0, 1.0, 1.0)
 
 # Font sizes matching the original Poppins fonts in the reference PDFs
-_SIZE_LABEL = 25.0   # Poppins-Bold 25 pt → use Gotham-Bold 25 pt
-_SIZE_SCORE = 28.0   # Poppins-Regular 28 pt → use Gotham-Book 28 pt
+_SIZE_NAME  = 25.0   # Nombre — Poppins-Bold 25 pt → Montserrat-Bold
+_SIZE_PUESTO = 25.0  # Puesto — Poppins-Bold 25 pt → Montserrat-Light
+_SIZE_SCORE = 28.0   # Score  — Poppins-Regular 28 pt → Montserrat-Bold
 
-# Max pixel width for name / position before truncation
+# Unique internal font names registered on the page
+_FNAME_BOLD  = "ie_bold"
+_FNAME_LIGHT = "ie_light"
+
+# Max width (pt) for name/position before truncation
 _MAX_TEXT_WIDTH = 700.0
 
 
@@ -67,8 +76,9 @@ class IEPDFGenerator:
     """
 
     def __init__(self):
-        self._font_bold = pymupdf.Font(fontfile=Config.GOTHAM_BOLD)
-        self._font_book = pymupdf.Font(fontfile=Config.GOTHAM_BOOK)
+        # Font objects used ONLY for text-width measurement (not for rendering)
+        self._measure_bold  = pymupdf.Font(fontfile=Config.FONT_BOLD)
+        self._measure_light = pymupdf.Font(fontfile=Config.FONT_LIGHT)
 
         assets = Config.ASSETS_DIR
         self._templates = {
@@ -113,24 +123,24 @@ class IEPDFGenerator:
     # ── Private helpers ───────────────────────────────────────────────
 
     def _write_name(self, page, x: float, y: float, name: str):
-        """Write user name in Gotham-Bold 25 pt white."""
-        text = self._fit_text(name, self._font_bold, _SIZE_LABEL, _MAX_TEXT_WIDTH)
-        self._put(page, x, y, text, self._font_bold, _SIZE_LABEL)
+        """Write user name in Montserrat-Bold 25 pt white."""
+        text = self._fit_text(name, self._measure_bold, _SIZE_NAME, _MAX_TEXT_WIDTH)
+        self._put(page, x, y, text, Config.FONT_BOLD, _FNAME_BOLD, _SIZE_NAME)
 
     def _write_position(self, page, x: float, y: float, position: str):
-        """Write job position in Gotham-Book 25 pt white."""
-        text = self._fit_text(position, self._font_book, _SIZE_LABEL, _MAX_TEXT_WIDTH)
-        self._put(page, x, y, text, self._font_book, _SIZE_LABEL)
+        """Write job position in Montserrat-Light 25 pt white."""
+        text = self._fit_text(position, self._measure_light, _SIZE_PUESTO, _MAX_TEXT_WIDTH)
+        self._put(page, x, y, text, Config.FONT_LIGHT, _FNAME_LIGHT, _SIZE_PUESTO)
 
     def _write_score(self, page, gap_center_x: float, y: float, score: int):
         """Write score number centered inside the template gap."""
         score_str = str(score)
-        score_w = self._font_bold.text_length(score_str, fontsize=_SIZE_SCORE)
+        score_w = self._measure_bold.text_length(score_str, fontsize=_SIZE_SCORE)
         x = gap_center_x - score_w / 2
-        self._put(page, x, y, score_str, self._font_bold, _SIZE_SCORE)
+        self._put(page, x, y, score_str, Config.FONT_BOLD, _FNAME_BOLD, _SIZE_SCORE)
 
     @staticmethod
-    def _fit_text(text: str, font, size: float, max_width: float) -> str:
+    def _fit_text(text: str, font: pymupdf.Font, size: float, max_width: float) -> str:
         """Truncate text with '...' if it exceeds max_width at the given size."""
         if font.text_length(text, fontsize=size) <= max_width:
             return text
@@ -141,10 +151,21 @@ class IEPDFGenerator:
         return text
 
     @staticmethod
-    def _put(page, x: float, y: float, text: str, font, size: float):
-        """Append text at (x, y) baseline using TextWriter (renders on top)."""
+    def _put(page, x: float, y: float, text: str,
+             fontfile: str, fontname: str, size: float):
+        """
+        Insert text at (x, y) baseline using page.insert_text().
+
+        Uses fontfile + unique fontname so PyMuPDF registers the font
+        in the page Resources and renders it on top of the existing design.
+        """
         if not text:
             return
-        writer = pymupdf.TextWriter(page.rect)
-        writer.append(pymupdf.Point(x, y), text, font=font, fontsize=size)
-        writer.write_text(page, color=_WHITE)
+        page.insert_text(
+            pymupdf.Point(x, y),
+            text,
+            fontfile=fontfile,
+            fontname=fontname,
+            fontsize=size,
+            color=_WHITE,
+        )

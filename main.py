@@ -9,22 +9,19 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 
 from models.schemas import PDFRequest, PDFResponse
-from models.ie_schemas import IEPDFRequest, IEPDFResponse      # ← NUEVO IE
 from services.pdf_generator import PDFGenerator
-from services.ie_pdf_generator import IEPDFGenerator           # ← NUEVO IE
 from services.pdf_store import PDFStore
 
 
 app = FastAPI(
     title="Skillera PDF Generator",
     version="1.2.0",
-    description="API para generar reportes PDF de diagnosticos de liderazgo e inteligencia emocional",
+    description="API para generar reportes PDF de diagnosticos de liderazgo",
 )
 
 # ── Singleton instances ───────────────────────────────────────────────
 
 pdf_generator = PDFGenerator()
-ie_generator = IEPDFGenerator()                                # IE overlay+merge
 
 # TTL configurable via environment variable (default: 30 minutes)
 PDF_TTL_MINUTES = int(os.getenv("PDF_TTL_MINUTES", "30"))
@@ -158,49 +155,6 @@ def generate_pdf_url(request: PDFRequest, req: Request):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
-
-
-# ── IE: POST /generate-ie-pdf (binary download) ──────────────────────
-
-@app.post("/generate-ie-pdf")
-def generate_ie_pdf(request: IEPDFRequest):
-    """
-    Genera PDF de Diagnostico de Inteligencia Emocional.
-    Retorna archivo binario descargable.
-
-    Niveles validos: Bajo (10-20pts) | Medio (21-30pts) | Alto (31-40pts)
-    Scoring: opcion 1->1pt, 2->2pts, 3->4pts, 4->1pt (escala no-lineal)
-    """
-    try:
-        pdf_buffer = ie_generator.generate_pdf(request.model_dump())
-        filename = (
-            f"diagnostico_ie_{request.user.name.replace(' ', '_')}"
-            f"_{date.today().isoformat()}.pdf"
-        )
-        return StreamingResponse(
-            pdf_buffer,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"IE PDF generation failed: {str(e)}")
-
-
-# ── IE: POST /generate-ie-pdf-base64 (base64 string) ─────────────────
-
-@app.post("/generate-ie-pdf-base64", response_model=IEPDFResponse)
-def generate_ie_pdf_base64(request: IEPDFRequest):
-    """Genera PDF de Diagnóstico IE y retorna base64 para WhatsApp."""
-    try:
-        pdf_buffer = ie_generator.generate_pdf(request.model_dump())
-        pdf_b64 = base64.b64encode(pdf_buffer.read()).decode("utf-8")
-        filename = (
-            f"diagnostico_ie_{request.user.name.replace(' ', '_')}"
-            f"_{date.today().isoformat()}.pdf"
-        )
-        return IEPDFResponse(success=True, pdf_base64=pdf_b64, filename=filename)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"IE PDF generation failed: {str(e)}")
 
 
 # ── GET /pdfs/{pdf_id} (serve stored PDF) ─────────────────────────────

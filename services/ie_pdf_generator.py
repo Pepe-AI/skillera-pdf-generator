@@ -54,6 +54,11 @@ _TEMPLATE_FILES = {
 # Text color: white
 _WHITE = (1.0, 1.0, 1.0)
 
+# Rasterization DPI — converts vectorial Canva template to JPEG image
+# to reduce PDF from ~11 MB to ~300-500 KB (fits n8n 5 MB execution limit)
+_RASTER_DPI = 150
+_JPEG_QUALITY = 85
+
 # Font sizes matching the original Poppins fonts in the reference PDFs
 _SIZE_NAME  = 25.0   # Nombre — Poppins-Bold 25 pt → Montserrat-Bold
 _SIZE_PUESTO = 25.0  # Puesto — Poppins-Bold 25 pt → Montserrat-Light
@@ -107,9 +112,20 @@ class IEPDFGenerator:
 
         nombre_x, nombre_y, puesto_x, puesto_y, score_cx, score_y = _LAYOUT[nivel]
 
-        doc = pymupdf.open(self._templates[nivel])
-        page = doc[0]
+        # 1. Open vectorial template and rasterize to JPEG to shrink ~11 MB → ~400 KB
+        src = pymupdf.open(self._templates[nivel])
+        src_page = src[0]
+        page_w, page_h = src_page.rect.width, src_page.rect.height
+        pix = src_page.get_pixmap(dpi=_RASTER_DPI)
+        img_bytes = pix.tobytes("jpeg", _JPEG_QUALITY)
+        src.close()
 
+        # 2. Create lightweight doc with rasterized background
+        doc = pymupdf.open()
+        page = doc.new_page(width=page_w, height=page_h)
+        page.insert_image(page.rect, stream=img_bytes)
+
+        # 3. Overlay dynamic text
         self._write_name(page, nombre_x, nombre_y, user["name"])
         self._write_position(page, puesto_x, puesto_y, user["position"])
         self._write_score(page, score_cx, score_y, total_score)

@@ -115,7 +115,7 @@ class IEPDFGenerator:
         self._write_score(page, score_cx, score_y, total_score)
 
         buf = BytesIO()
-        doc.save(buf)
+        doc.save(buf, deflate=True, garbage=4, clean=True, pretty=False)
         doc.close()
         buf.seek(0)
         return buf

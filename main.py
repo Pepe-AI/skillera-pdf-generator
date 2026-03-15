@@ -9,9 +9,7 @@ from fastapi.responses import StreamingResponse, Response
 
 from models.schemas import PDFRequest, PDFResponse
 from models.ie_schemas import IEPDFRequest, IEPDFResponse
-from services.pdf_generator import PDFGenerator
 from services.ie_pdf_generator import IEPDFGenerator
-from services.pdf_store import PDFStore
 
 
 app = FastAPI(
@@ -22,14 +20,29 @@ app = FastAPI(
 
 # ── Singleton instances ───────────────────────────────────────────────
 
-pdf_generator = PDFGenerator()
 ie_generator = IEPDFGenerator()
 
-# TTL configurable via environment variable (default: 30 minutes)
+# Liderazgo generators — lazy-loaded only if their endpoints are called
+_pdf_generator = None
+_pdf_store = None
 PDF_TTL_MINUTES = int(os.getenv("PDF_TTL_MINUTES", "30"))
 PDF_MAX_ITEMS = int(os.getenv("PDF_MAX_ITEMS", "100"))
 
-pdf_store = PDFStore(ttl_minutes=PDF_TTL_MINUTES, max_items=PDF_MAX_ITEMS)
+
+def _get_pdf_generator():
+    global _pdf_generator
+    if _pdf_generator is None:
+        from services.pdf_generator import PDFGenerator
+        _pdf_generator = PDFGenerator()
+    return _pdf_generator
+
+
+def _get_pdf_store():
+    global _pdf_store
+    if _pdf_store is None:
+        from services.pdf_store import PDFStore
+        _pdf_store = PDFStore(ttl_minutes=PDF_TTL_MINUTES, max_items=PDF_MAX_ITEMS)
+    return _pdf_store
 
 
 # ── Helper: build filename ────────────────────────────────────────────
@@ -69,7 +82,7 @@ def health_check():
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
         "service": "pdf-generator",
-        "pdf_store_count": pdf_store.count,
+        "pdf_store_count": _pdf_store.count if _pdf_store else 0,
         "pdf_ttl_minutes": PDF_TTL_MINUTES,
     }
 
@@ -86,7 +99,7 @@ def root():
 def generate_pdf(request: PDFRequest):
     """Generate PDF and return as a downloadable binary file."""
     try:
-        pdf_buffer: BytesIO = pdf_generator.generate_pdf(request.model_dump())
+        pdf_buffer: BytesIO = _get_pdf_generator().generate_pdf(request.model_dump())
         filename = _build_filename(request.user.name)
 
         return StreamingResponse(
@@ -104,7 +117,7 @@ def generate_pdf(request: PDFRequest):
 def generate_pdf_base64(request: PDFRequest):
     """Generate PDF and return as base64 string (for WhatsApp/Email integration)."""
     try:
-        pdf_buffer: BytesIO = pdf_generator.generate_pdf(request.model_dump())
+        pdf_buffer: BytesIO = _get_pdf_generator().generate_pdf(request.model_dump())
         pdf_bytes = pdf_buffer.read()
         pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
         filename = _build_filename(request.user.name)
@@ -138,12 +151,12 @@ def generate_pdf_url(request: PDFRequest, req: Request):
     """
     try:
         # 1. Generate the PDF
-        pdf_buffer: BytesIO = pdf_generator.generate_pdf(request.model_dump())
+        pdf_buffer: BytesIO = _get_pdf_generator().generate_pdf(request.model_dump())
         pdf_bytes = pdf_buffer.read()
         filename = _build_filename(request.user.name)
 
         # 2. Store in memory with TTL
-        pdf_id = pdf_store.save(pdf_bytes, filename)
+        pdf_id = _get_pdf_store().save(pdf_bytes, filename)
 
         # 3. Build public URL
         pdf_url = _build_pdf_url(req, pdf_id)
@@ -214,7 +227,7 @@ def get_stored_pdf(pdf_id: str):
 
     Returns 404 if the PDF has expired or doesn't exist.
     """
-    entry = pdf_store.get(pdf_id)
+    entry = _get_pdf_store().get(pdf_id)
 
     if entry is None:
         raise HTTPException(
@@ -243,7 +256,7 @@ def delete_stored_pdf(pdf_id: str):
     This is optional — PDFs auto-expire after TTL. But calling this
     immediately after successful WhatsApp delivery frees memory sooner.
     """
-    deleted = pdf_store.delete(pdf_id)
+    deleted = _get_pdf_store().delete(pdf_id)
 
     if not deleted:
         raise HTTPException(status_code=404, detail="PDF not found or already expired.")
@@ -260,7 +273,7 @@ def list_stored_pdfs():
     Does NOT return the PDF bytes, just metadata.
     """
     return {
-        "count": pdf_store.count,
+        "count": _pdf_store.count if _pdf_store else 0,
         "ttl_minutes": PDF_TTL_MINUTES,
         "max_items": PDF_MAX_ITEMS,
     }

@@ -54,9 +54,9 @@ _TEMPLATE_FILES = {
 # Text color: white
 _WHITE = (1.0, 1.0, 1.0)
 
-# Rasterization DPI — converts vectorial Canva template to JPEG image
-# to reduce PDF from ~11 MB to ~300-500 KB (fits n8n 5 MB execution limit)
-_RASTER_DPI = 150
+# Rasterization DPI — templates are pre-rasterized once at startup
+# 72 DPI = 1:1 with page pt dimensions, good quality for mobile/chat
+_RASTER_DPI = 72
 _JPEG_QUALITY = 85
 
 # Font sizes matching the original Poppins fonts in the reference PDFs
@@ -85,11 +85,18 @@ class IEPDFGenerator:
         self._measure_bold  = pymupdf.Font(fontfile=Config.FONT_BOLD)
         self._measure_light = pymupdf.Font(fontfile=Config.FONT_LIGHT)
 
+        # Pre-rasterize templates once at startup → eliminates ~46 MB pixmap per request
+        # Cached data per nivel: (jpeg_bytes, page_width, page_height)
+        self._cached_bg: dict[str, tuple[bytes, float, float]] = {}
         assets = Config.ASSETS_DIR
-        self._templates = {
-            nivel: os.path.join(assets, fname)
-            for nivel, fname in _TEMPLATE_FILES.items()
-        }
+        for nivel, fname in _TEMPLATE_FILES.items():
+            path = os.path.join(assets, fname)
+            doc = pymupdf.open(path)
+            page = doc[0]
+            pw, ph = page.rect.width, page.rect.height
+            pix = page.get_pixmap(dpi=_RASTER_DPI)
+            self._cached_bg[nivel] = (pix.tobytes("jpeg", _JPEG_QUALITY), pw, ph)
+            doc.close()
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -112,15 +119,8 @@ class IEPDFGenerator:
 
         nombre_x, nombre_y, puesto_x, puesto_y, score_cx, score_y = _LAYOUT[nivel]
 
-        # 1. Open vectorial template and rasterize to JPEG to shrink ~11 MB → ~400 KB
-        src = pymupdf.open(self._templates[nivel])
-        src_page = src[0]
-        page_w, page_h = src_page.rect.width, src_page.rect.height
-        pix = src_page.get_pixmap(dpi=_RASTER_DPI)
-        img_bytes = pix.tobytes("jpeg", _JPEG_QUALITY)
-        src.close()
-
-        # 2. Create lightweight doc with rasterized background
+        # Use pre-rasterized JPEG from cache (no template open, no pixmap allocation)
+        img_bytes, page_w, page_h = self._cached_bg[nivel]
         doc = pymupdf.open()
         page = doc.new_page(width=page_w, height=page_h)
         page.insert_image(page.rect, stream=img_bytes)
@@ -140,8 +140,8 @@ class IEPDFGenerator:
 
     def _write_name(self, page, x: float, y: float, name: str):
         """Write user name in Montserrat-Bold 25 pt white."""
-        text = self._fit_text(name, self._measure_bold, _SIZE_NAME, _MAX_TEXT_WIDTH)
-        self._put(page, x, y, text, Config.FONT_BOLD, _FNAME_BOLD, _SIZE_NAME)
+        text = self._fit_text(name, self._measure_light, _SIZE_NAME, _MAX_TEXT_WIDTH)
+        self._put(page, x, y, text, Config.FONT_LIGHT, _FNAME_LIGHT, _SIZE_NAME)
 
     def _write_position(self, page, x: float, y: float, position: str):
         """Write job position in Montserrat-Light 25 pt white."""

@@ -9,18 +9,21 @@ from fastapi.responses import StreamingResponse, Response
 
 from models.schemas import PDFRequest, PDFResponse
 from models.ie_schemas import IEPDFRequest, IEPDFResponse
+from models.at_schemas import ATPDFRequest, ATPDFResponse
 from services.ie_pdf_generator import IEPDFGenerator
+from services.at_pdf_generator import ATPDFGenerator
 
 
 app = FastAPI(
     title="Skillera PDF Generator",
-    version="1.3.0",
-    description="API para generar reportes PDF de diagnosticos de liderazgo e inteligencia emocional",
+    version="1.4.0",
+    description="API para generar reportes PDF de diagnosticos de liderazgo, inteligencia emocional y alfabetizacion tecnologica",
 )
 
 # ── Singleton instances ───────────────────────────────────────────────
 
 ie_generator = IEPDFGenerator()
+at_generator = ATPDFGenerator()
 
 # Liderazgo generators — lazy-loaded only if their endpoints are called
 _pdf_generator = None
@@ -90,7 +93,7 @@ def health_check():
 @app.get("/")
 def root():
     """Root endpoint with service info."""
-    return {"message": "Skillera PDF Generator API v1.3.0"}
+    return {"message": "Skillera PDF Generator API v1.4.0"}
 
 
 # ── POST /generate-pdf (binary download) ─────────────────────────────
@@ -213,6 +216,49 @@ def generate_ie_pdf_base64(request: IEPDFRequest):
         return IEPDFResponse(success=True, pdf_base64=pdf_b64, filename=filename)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"IE PDF generation failed: {str(e)}")
+
+
+# ── AT: POST /generate-at-pdf (binary download) ──────────────────────
+
+@app.post("/generate-at-pdf")
+def generate_at_pdf(request: ATPDFRequest):
+    """
+    Genera PDF de Diagnóstico de Alfabetización Tecnológica.
+    Retorna archivo binario descargable.
+
+    Niveles válidos: Básico (10-17 pts) | Intermedio (18-25 pts) | Avanzado (26-30 pts)
+    Scoring: A=1pt, B=2pts, C=3pts
+    """
+    try:
+        pdf_buffer = at_generator.generate_pdf(request.model_dump())
+        filename = (
+            f"diagnostico_at_{request.user.name.replace(' ', '_')}"
+            f"_{date.today().isoformat()}.pdf"
+        )
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AT PDF generation failed: {str(e)}")
+
+
+# ── AT: POST /generate-at-pdf-base64 (base64 string) ─────────────────
+
+@app.post("/generate-at-pdf-base64", response_model=ATPDFResponse)
+def generate_at_pdf_base64(request: ATPDFRequest):
+    """Genera PDF de Diagnóstico AT y retorna base64 para WhatsApp/Email."""
+    try:
+        pdf_buffer = at_generator.generate_pdf(request.model_dump())
+        pdf_b64 = base64.b64encode(pdf_buffer.read()).decode("utf-8")
+        filename = (
+            f"diagnostico_at_{request.user.name.replace(' ', '_')}"
+            f"_{date.today().isoformat()}.pdf"
+        )
+        return ATPDFResponse(success=True, pdf_base64=pdf_b64, filename=filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AT PDF generation failed: {str(e)}")
 
 
 # ── GET /pdfs/{pdf_id} (serve stored PDF) ─────────────────────────────

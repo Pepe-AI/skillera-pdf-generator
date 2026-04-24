@@ -32,9 +32,9 @@ from config import Config
 
 # Coordinates per nivel: (nombre_x, nombre_y, score_gap_center_x, score_y)
 _LAYOUT = {
-    "Básico":      (492.7, 949.3, 687.0, 1135.9),
-    "Intermedio":  (504.5, 941.7, 678.0, 1105.8),
-    "Avanzado":    (492.7, 949.3, 678.0, 1138.9),
+    "Básico":      (492.7, 942.0, 687.0, 1128.0),
+    "Intermedio":  (504.5, 934.0, 678.0, 1098.0),
+    "Avanzado":    (492.7, 942.0, 678.0, 1131.0),
 }
 
 # Reference PDF filenames per nivel
